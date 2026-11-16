@@ -1,0 +1,4 @@
+gems:
+  - gemspec: mallorn.gemspec
+    hooks:
+      prebuild: bundle exec rake tree-sitter
