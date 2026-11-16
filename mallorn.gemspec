@@ -18,6 +18,8 @@ Gem::Specification.new do |spec|
   end
   spec.require_paths = ['lib']
 
+  spec.add_dependency 'wasmtime', '~> 50.0'
+
   spec.metadata = {
     'source_code_uri' => spec.homepage,
     'bug_tracker_uri' => "#{spec.homepage}/issues",
