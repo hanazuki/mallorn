@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdlib.h>
+#include <wctype.h>
 #include <tree_sitter/api.h>
 
 // Only functions explicitly marked here form Mallorn's Wasm API. Pointers are
@@ -14,6 +15,41 @@ void *mallorn_alloc(uint32_t size) {
 EXPORT(mallorn_free)
 void mallorn_free(void *pointer) {
   free(pointer);
+}
+
+EXPORT(mallorn_calloc)
+void *mallorn_calloc(uint32_t count, uint32_t size) {
+  return calloc(count, size);
+}
+
+EXPORT(mallorn_iswspace)
+int32_t mallorn_iswspace(uint32_t code_point) {
+  return iswspace(code_point);
+}
+
+EXPORT(mallorn_iswalpha)
+int32_t mallorn_iswalpha(uint32_t code_point) {
+  return iswalpha(code_point);
+}
+
+EXPORT(mallorn_language_symbol_count)
+uint32_t mallorn_language_symbol_count(const TSLanguage *language) {
+  return ts_language_symbol_count(language);
+}
+
+EXPORT(mallorn_language_field_count)
+uint32_t mallorn_language_field_count(const TSLanguage *language) {
+  return ts_language_field_count(language);
+}
+
+EXPORT(mallorn_language_state_count)
+uint32_t mallorn_language_state_count(const TSLanguage *language) {
+  return ts_language_state_count(language);
+}
+
+EXPORT(mallorn_language_metadata)
+const TSLanguageMetadata *mallorn_language_metadata(const TSLanguage *language) {
+  return ts_language_metadata(language);
 }
 
 EXPORT(mallorn_language_version)
@@ -87,4 +123,16 @@ TSRange *mallorn_tree_changed_ranges(
   uint32_t *count
 ) {
   return ts_tree_get_changed_ranges(old_tree, new_tree, count);
+}
+
+// Convenience entrypoints for verifying linked grammars before the Ruby node
+// interface is implemented. The returned string is released with mallorn_free.
+EXPORT(mallorn_tree_string)
+char *mallorn_tree_string(const TSTree *tree) {
+  return ts_node_string(ts_tree_root_node(tree));
+}
+
+EXPORT(mallorn_tree_has_error)
+bool mallorn_tree_has_error(const TSTree *tree) {
+  return ts_node_has_error(ts_tree_root_node(tree));
 }

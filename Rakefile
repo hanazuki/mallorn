@@ -30,7 +30,7 @@ file output.to_s => tree_sitter_sources.map(&:to_s) do
     sh compiler.to_s, '--target=wasm32-wasip1', '-mexec-model=reactor',
        '-std=c11', '-O2', '-DNDEBUG', '-D_POSIX_C_SOURCE=200809L',
        '-Wall', '-Wextra', '-I', include_dir.to_s, '-I', source_dir.to_s,
-       '-Wl,--export-table', '-Wl,--growable-table',
+       '-Wl,--export-table', '-Wl,--growable-table', '-Wl,--export=__stack_pointer',
        main.to_s, engine.to_s, '-o', temporary.to_s
     temporary.rename(output)
   ensure

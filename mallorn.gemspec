@@ -1,4 +1,4 @@
-require_relative 'lib/mallorn'
+require_relative 'lib/mallorn/version'
 
 Gem::Specification.new do |spec|
   spec.name = 'mallorn'

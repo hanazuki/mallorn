@@ -1,6 +1,7 @@
-module Mallorn
-  VERSION = '0.1.0'
+require 'wasmtime'
+require_relative 'mallorn/version'
 
+module Mallorn
   SUPPORTED_ENCODINGS = [Encoding::UTF_8, Encoding::UTF_16LE, Encoding::UTF_16BE].freeze
 
   class Error < StandardError; end
@@ -10,6 +11,7 @@ module Mallorn
   class ClosedError < Error; end
   class CancelledError < Error; end
   class QueryError < Error; end
+  class LinkError < Error; end
 
   # Rows and columns are zero-based. Columns count bytes since the last LF,
   # in the source encoding, including for UTF-16 input.
@@ -30,24 +32,39 @@ module Mallorn
   # exchange backend handles. GC releases resources; close releases them early.
   class Runtime
     def initialize
-      fail 'TODO'
+      @mutex = Mutex.new
+      @backend = WasmLinker.new(Pathname(__dir__).parent / 'tree-sitter.wasm')
     end
 
     def load_language(path, name:)
-      fail 'TODO'
+      load_language_bytes(Pathname(path).binread, name: name)
     end
 
     def load_language_bytes(bytes, name:)
-      fail 'TODO'
+      unless name.is_a?(String) && name.match?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+        raise ArgumentError, 'Language name must be a C identifier'
+      end
+      name = name.dedup
+      with_backend do |backend|
+        loaded = backend.load(bytes, name: name)
+        Language.new(runtime: self, name: name, loaded: loaded)
+      end
     end
 
     # Invalidates every object belonging to this runtime. Idempotent.
     def close
-      fail 'TODO'
+      @mutex.synchronize { @backend.close }
     end
 
     def closed?
-      fail 'TODO'
+      @mutex.synchronize { @backend.closed? }
+    end
+
+    def with_backend
+      @mutex.synchronize do
+        raise ClosedError, 'Runtime is closed' if @backend.closed?
+        yield @backend
+      end
     end
   end
 
@@ -55,8 +72,17 @@ module Mallorn
     attr_reader :runtime, :name, :abi_version, :metadata
     attr_reader :symbol_count, :field_count, :state_count
 
-    # Instances are returned by Runtime; no public constructor.
-    private_class_method :new
+    # Internal constructor used by Runtime with a linked language handle.
+    def initialize(runtime:, name:, loaded:)
+      @runtime = runtime
+      @name = name
+      @loaded = loaded
+      @abi_version = loaded.abi_version
+      @symbol_count = loaded.symbol_count
+      @field_count = loaded.field_count
+      @state_count = loaded.state_count
+      @metadata = loaded.metadata
+    end
 
     def symbol_name(symbol_id)
       fail 'TODO'
@@ -141,10 +167,8 @@ module Mallorn
   end
 
   # A persistent syntax snapshot. Nodes and cursors retain their tree, which
-  # retains its runtime, language, and source. No public constructor.
+  # retains its runtime, language, and source.
   class Tree
-    private_class_method :new
-
     attr_reader :runtime, :language, :encoding, :source, :included_ranges
 
     def root_node
@@ -175,8 +199,6 @@ module Mallorn
   end
 
   class Node
-    private_class_method :new
-
     attr_reader :tree
 
     # Node identity is scoped to a tree snapshot, not a stable identifier across
@@ -361,8 +383,6 @@ module Mallorn
 
   # Stateful traversal. Movement returns true on success, false otherwise.
   class TreeCursor
-    private_class_method :new
-
     attr_reader :tree
 
     def node
@@ -422,8 +442,6 @@ module Mallorn
   Match = Data.define(:pattern_index, :captures, :properties)
 
   class Query
-    private_class_method :new
-
     attr_reader :language, :pattern_count, :capture_names
 
     # Introspection preserves predicates/directives, including unknown ones.
@@ -442,8 +460,6 @@ module Mallorn
   # Each execution uses one node's source snapshot for predicate evaluation.
   # A cursor cannot execute concurrently or reentrantly.
   class QueryCursor
-    private_class_method :new
-
     # Return an Enumerator<Match>. Byte and point ranges, when supplied, are
     # half-open Ruby Ranges; matches may extend beyond the filtering range.
     # cancellation has the same contract as Parser#parse.
@@ -474,3 +490,5 @@ module Mallorn
   end
 
 end
+
+require_relative 'mallorn/wasm_linker'

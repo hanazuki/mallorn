@@ -2,8 +2,9 @@
 
 WebAssembly-based Tree-sitter bindings for Ruby.
 
-Mallorn is currently an API draft. Parsing and Wasm loading are not implemented;
-unfinished methods use `fail 'TODO'`.
+Mallorn is under development. Runtime initialization and Wasm grammar linking
+are implemented; the public parsing, node, and query APIs remain drafts.
+Unfinished methods use `fail 'TODO'`.
 
 The planned API supports incremental parsing, UTF-8/UTF-16LE/UTF-16BE input,
 caller-owned chunked storage, tree navigation, and queries. Source storage and
@@ -59,11 +60,46 @@ Emscripten JavaScript runtime is used. Initialize WASI and call `_initialize`
 once before using the module in Wasmtime.
 
 The initial exports cover allocation, parser lifecycle, contiguous input in
-all three encodings, and tree reuse/editing. Chunked input callbacks and grammar
-module loading/linking are not implemented yet.
+all three encodings, and tree reuse/editing. Chunked input callbacks are not
+implemented yet.
+
+## Loading grammars
+
+```ruby
+require 'mallorn'
+
+runtime = Mallorn::Runtime.new
+begin
+  javascript = runtime.load_language(
+    'node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm',
+    name: 'javascript'
+  )
+  javascript.abi_version # => 15
+  javascript.metadata # => { major_version: 0, minor_version: 25, patch_version: 0 }
+ensure
+  runtime.close
+end
+```
+
+`Runtime#load_language_bytes(bytes, name:)` accepts a Wasm binary directly.
+The name identifies the module's `tree_sitter_<name>` export.
+
+The linker in `lib/mallorn/wasm_linker.rb` supports self-contained wasm32
+`dylink.0` modules. It allocates separate data and function-table regions for
+each load, shares the engine's stack pointer, applies data relocations, runs
+initializers, and checks the grammar ABI. Loading and engine access are serialized
+within each runtime. Loaded modules remain resident until the runtime is closed
+or garbage-collected.
+
+Current scanner imports are `env.iswspace`, `env.iswalpha`, `env.malloc`,
+`env.calloc`, and `env.free`, implemented by the engine's WASI libc. Other
+imports, dependencies on additional shared modules, and legacy `dylink` modules
+are rejected with `Mallorn::LinkError`. Incompatible grammar ABIs raise
+`Mallorn::IncompatibleLanguageError`. The pinned JavaScript grammar is tested
+through the engine, including its external scanner, in all three encodings.
 
 The RSpec suite builds and instantiates the module, so it also requires
-`WASI_SDK_PATH`. The Ruby API remains a draft with TODO method bodies.
+`WASI_SDK_PATH`. Grammar linking specs also require the npm dependency.
 
 ## License
 
