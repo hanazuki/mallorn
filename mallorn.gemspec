@@ -14,7 +14,8 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = '>= 4.0'
 
   spec.files = Dir.chdir(__dir__) do
-    Dir['lib/**/*.rb', 'README.md', 'LICENSE.txt'].sort
+    (Dir['lib/**/*.rb', 'README.md', 'LICENSE.txt'] +
+      ['tree-sitter.wasm', 'tree-sitter/LICENSE']).sort
   end
   spec.require_paths = ['lib']
 

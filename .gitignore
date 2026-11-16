@@ -2,3 +2,5 @@
 /pkg/
 /vendor/bundle/
 /*.gem
+/tree-sitter.wasm
+/tree-sitter.wasm.tmp

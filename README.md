@@ -28,9 +28,36 @@ Build the gem into `pkg/`:
 bundle exec rake build
 ```
 
-The Tree-sitter source is tracked as a submodule. For future backend development,
-initialize it with `git submodule update --init --recursive`. The current Ruby
-API draft and test suite do not require a Wasm toolchain.
+This compiles and includes `tree-sitter.wasm` in the gem. Building the gem requires
+WASI SDK as described below; installing the built gem does not.
+
+## Building Tree-sitter
+
+Install [WASI SDK](https://github.com/WebAssembly/wasi-sdk/releases) (tested with
+34), then initialize the Tree-sitter submodule and build:
+
+```sh
+git submodule update --init tree-sitter
+export WASI_SDK_PATH=/path/to/wasi-sdk
+bundle exec rake tree-sitter
+```
+
+This generates `tree-sitter.wasm` at the repository root. Subsequent invocations
+rebuild when the C sources, headers, or Rakefile change. Run `bundle exec rake
+clean` to remove the output, including when changing SDK versions.
+
+The engine is a wasm32 WASI Preview 1 reactor, with `_initialize`, exported
+memory and a growable function table. Mallorn's entrypoints are defined in
+`src/main.c` against Tree-sitter's public C API. No Web binding code or
+Emscripten JavaScript runtime is used. Initialize WASI and call `_initialize`
+once before using the module in Wasmtime.
+
+The initial exports cover allocation, parser lifecycle, contiguous input in
+all three encodings, and tree reuse/editing. Chunked input callbacks and grammar
+module loading/linking are not implemented yet.
+
+The RSpec suite builds and instantiates the module, so it also requires
+`WASI_SDK_PATH`. The Ruby API remains a draft with TODO method bodies.
 
 ## License
 
