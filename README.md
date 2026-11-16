@@ -17,10 +17,16 @@ Ruby 4.0 or later.
 
 ```sh
 bundle install
+npm ci --ignore-scripts
 bundle exec rake
 ```
 
 Run RSpec directly with `bundle exec rspec`.
+
+The npm development dependency pins `tree-sitter-javascript` to 0.25.0 for its
+published `node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm`
+grammar. Native Node binding installation scripts are unnecessary for Wasm
+tests and are skipped by `--ignore-scripts`.
 
 Build the gem into `pkg/`:
 
