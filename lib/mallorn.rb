@@ -511,7 +511,7 @@ module Mallorn
     # @api private
     def initialize(runtime:, linked:)
       @runtime = runtime
-      @linked = linked
+      @module = linked
       @languages = {}
     end
 
@@ -532,10 +532,10 @@ module Mallorn
       name = name.dedup
       @runtime.with_backend do |backend|
         next @languages[name] if @languages.key?(name)
-        entrypoint = @linked.instance.export("tree_sitter_#{name}")
+        entrypoint = @module.instance.export("tree_sitter_#{name}")
         raise LinkError, "Missing grammar export tree_sitter_#{name}" unless entrypoint
         address = entrypoint.to_func.call & 0xffffffff
-        unless address >= @linked.memory_base && address + 4 <= @linked.memory_base + @linked.memory_size
+        unless address >= @module.memory_base && address + 4 <= @module.memory_base + @module.memory_size
           raise LinkError, 'Grammar returned a language pointer outside its data region'
         end
         abi_version = backend.memory.read_u32(address)
