@@ -488,6 +488,8 @@ module Mallorn
 
     def read_input(_caller, offset, row, column, buffer, capacity)
       begin
+        # Wasmtime exposes i32 arguments as signed integers; recover the
+        # unsigned offsets, coordinates, and buffer pointer used by Tree-sitter.
         bytes = @read_callback.call(offset & 0xffffffff, Point.new(row & 0xffffffff, column & 0xffffffff), capacity)
         memory.write(buffer & 0xffffffff, bytes)
         bytes.bytesize
