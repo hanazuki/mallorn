@@ -286,9 +286,6 @@ module Mallorn
   # A runtime serializes Wasm access. Input/cancellation callbacks must not
   # reenter it. All handles become invalid when the runtime is closed.
   class Runtime
-    LanguageInfo = Data.define(:address, :abi_version, :metadata, :symbol_count, :field_count, :state_count)
-    private_constant :LanguageInfo
-
     # @api private
     attr_reader :release_queue
 
@@ -368,13 +365,13 @@ module Mallorn
             major, minor, patch = memory.read(metadata_pointer, 3).unpack('C3')
             { major_version: major, minor_version: minor, patch_version: patch }.freeze
           end
-          loaded = LanguageInfo.new(
-            address: address, abi_version: abi_version, metadata: metadata,
+          Language.new(
+            runtime: self, name:,
+            address:, abi_version:, metadata:,
             symbol_count: invoke('mallorn_language_symbol_count', address),
             field_count: invoke('mallorn_language_field_count', address),
             state_count: invoke('mallorn_language_state_count', address)
           )
-          Language.new(runtime: self, name: name, loaded: loaded)
         end
       end
     end
@@ -539,11 +536,15 @@ module Mallorn
     attr_reader :address
 
     # @api private
-    def initialize(runtime:, name:, loaded:)
-      @runtime, @name, @loaded = runtime, name, loaded
-      @address = loaded.address
-      @abi_version, @metadata = loaded.abi_version, loaded.metadata
-      @symbol_count, @field_count, @state_count = loaded.symbol_count, loaded.field_count, loaded.state_count
+    def initialize(runtime:, name:, address:, abi_version:, metadata:, symbol_count:, field_count:, state_count:)
+      @runtime = runtime
+      @name = name
+      @address = address
+      @abi_version = abi_version
+      @metadata = metadata
+      @symbol_count = symbol_count
+      @field_count = field_count
+      @state_count = state_count
     end
 
     # @param symbol_id [Integer] ID below symbol_count, or 65535 for ERROR
