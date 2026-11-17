@@ -240,31 +240,31 @@ module Mallorn
     # Finalizers enqueue releases. The next serialized runtime operation frees
     # them; no Wasmtime calls or mutex acquisition occur inside a GC finalizer.
     class Handle
-      def self.finalizer(queue, function, state)
-        proc { queue << [function, state[0]] unless state[0].zero? }
+      def self.finalizer(queue, function, address)
+        proc { queue << [function, address] }
       end
 
       def initialize(runtime, function, address)
         raise Error, 'Cannot allocate Tree-sitter resource' if address.zero?
         @runtime = runtime
         @function = function
-        @state = [address]
-        ObjectSpace.define_finalizer(self, self.class.finalizer(runtime.release_queue, function, @state))
+        @address = address
+        ObjectSpace.define_finalizer(self, self.class.finalizer(runtime.release_queue, function, address))
       end
 
       def address
-        raise ClosedError, 'Object is closed' if @state[0].zero?
-        @state[0]
+        raise ClosedError, 'Object is closed' if @address.zero?
+        @address
       end
 
       def close
-        return if @state[0].zero?
+        return if @address.zero?
         if @runtime.closed?
-          @state[0] = 0
+          @address = 0
         else
           @runtime.with_backend do |backend|
-            backend.invoke(@function, @state[0]) unless @state[0].zero?
-            @state[0] = 0
+            backend.invoke(@function, @address) unless @address.zero?
+            @address = 0
           end
         end
         ObjectSpace.undefine_finalizer(self)
@@ -272,7 +272,7 @@ module Mallorn
       end
 
       def closed?
-        @state[0].zero? || @runtime.closed?
+        @address.zero? || @runtime.closed?
       end
     end
   end
