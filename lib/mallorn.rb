@@ -432,8 +432,13 @@ module Mallorn
     end
 
     # @api private
-    def string(address)
-      address.zero? ? nil : memory.read_cstring(address).force_encoding(Encoding::UTF_8).dedup
+    def cstring(address)
+      memory.read_cstring(address).force_encoding(Encoding::UTF_8)
+    end
+
+    # @api private
+    def string(address, length)
+      memory.read(address, length).force_encoding(Encoding::UTF_8)
     end
 
     # @api private
@@ -614,7 +619,7 @@ module Mallorn
     # @raise [ArgumentError] the symbol ID is invalid
     def symbol_name(symbol_id)
       validate_symbol(symbol_id)
-      @runtime.with_backend { |backend| backend.string(backend.pointer('mallorn_language_symbol_name', @address, symbol_id)) }
+      @runtime.with_backend { |backend| backend.cstring(backend.pointer('mallorn_language_symbol_name', @address, symbol_id)) }
     end
 
     # @param symbol_id [Integer] ID below symbol_count, or 65535 for ERROR
@@ -638,7 +643,10 @@ module Mallorn
     # @raise [ArgumentError] the field ID is invalid
     def field_name(field_id)
       Internal.uint(field_id, @field_count)
-      @runtime.with_backend { |backend| backend.string(backend.pointer('mallorn_language_field_name', @address, field_id)) }
+      @runtime.with_backend do |backend|
+        pointer = backend.pointer('mallorn_language_field_name', @address, field_id)
+        backend.cstring(pointer) unless pointer.zero?
+      end
     end
 
     # @param name [String] field name
@@ -1178,7 +1186,10 @@ module Mallorn
     def field_name_for_child(index)
       Internal.uint(index)
       @tree.runtime.with_backend do |backend|
-        backend.buffer(@bytes) { |input| backend.string(backend.pointer('mallorn_node_field', input, index)) }
+        backend.buffer(@bytes) do |input|
+          pointer = backend.pointer('mallorn_node_field', input, index)
+          backend.cstring(pointer) unless pointer.zero?
+        end
       end
     end
 
@@ -1278,7 +1289,7 @@ module Mallorn
         backend.buffer(@bytes) do |input|
           pointer = backend.pointer('mallorn_node_string', input)
           begin
-            backend.string(pointer)
+            backend.cstring(pointer)
           ensure
             backend.invoke('mallorn_free', pointer)
           end
@@ -1295,8 +1306,8 @@ module Mallorn
           backend.buffer(60) do |output|
             backend.invoke('mallorn_node_info', input, output)
             values = backend.memory.read(output, 60).unpack('L<*')
-            values[0] = backend.string(values[0])
-            values[1] = backend.string(values[1])
+            values[0] = backend.cstring(values[0])
+            values[1] = backend.cstring(values[1])
             values.freeze
           end
         end
@@ -1568,7 +1579,7 @@ module Mallorn
     def query_string(backend, function, address, index)
       backend.buffer(4) do |length|
         pointer = backend.pointer(function, address, index, length)
-        backend.memory.read(pointer, backend.memory.read_u32(length)).force_encoding(Encoding::UTF_8).dedup
+        backend.string(pointer, backend.memory.read_u32(length))
       end
     end
   end
