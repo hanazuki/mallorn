@@ -566,6 +566,12 @@ module Mallorn
   # A loaded language shared by parsers, trees, and queries. Obtain one from
   # {Grammar#language}, {Runtime#load_language}, or {Runtime#load_language_bytes}.
   class Language
+    # Tree-sitter TSSymbolType values.
+    SYMBOL_TYPE_REGULAR = 0
+    SYMBOL_TYPE_ANONYMOUS = 1
+    SYMBOL_TYPE_SUPERTYPE = 2
+    SYMBOL_TYPE_AUXILIARY = 3
+
     # @return [Runtime] owning runtime
     attr_reader :runtime
 
@@ -615,14 +621,16 @@ module Mallorn
     # @return [Boolean] whether the symbol denotes a named node or supertype
     # @raise [ArgumentError] the symbol ID is invalid
     def symbol_named?(symbol_id)
-      [0, 2].include?(symbol_type(symbol_id))
+      type = symbol_type(symbol_id)
+      type == SYMBOL_TYPE_REGULAR || type == SYMBOL_TYPE_SUPERTYPE
     end
 
     # @param symbol_id [Integer] ID below symbol_count, or 65535 for ERROR
     # @return [Boolean] whether nodes of this symbol are exposed in trees
     # @raise [ArgumentError] the symbol ID is invalid
     def symbol_visible?(symbol_id)
-      [0, 1].include?(symbol_type(symbol_id))
+      type = symbol_type(symbol_id)
+      type == SYMBOL_TYPE_REGULAR || type == SYMBOL_TYPE_ANONYMOUS
     end
 
     # @param field_id [Integer] ID in 0..field_count
