@@ -1523,9 +1523,10 @@ module Mallorn
     #
     # Unknown operations, including property predicates such as is?, require
     # handlers; they are never silently ignored. Handlers may override builtins.
-    # @param handlers [Hash{String, Symbol => #call}] operation names without #,
+    # @param handlers [Hash{String => #call}] operation names without #,
     #   mapped to callables receiving (Predicate, Match). Predicate handlers return
     #   truthy to accept. Directive handlers ending in ! return a property Hash or nil.
+    #   The supplied Hash is retained by reference.
     # @return [QueryCursor]
     # @raise [QueryError] unhandled operation, malformed predicate, or invalid regexp
     # @example Standard predicates and match properties
@@ -1590,8 +1591,7 @@ module Mallorn
       raise TypeError, 'Expected a Query' unless query.is_a?(Query)
       raise TypeError, 'Expected a handlers Hash' unless handlers.is_a?(Hash)
       @query = query
-      @handlers = handlers.transform_keys(&:to_s).freeze
-      @handlers.each_value { |value| raise TypeError, 'Handlers must respond to call' unless value.respond_to?(:call) }
+      @handlers = handlers
       @operation = Mutex.new
       @regexps = {}
       @exceeded = false
