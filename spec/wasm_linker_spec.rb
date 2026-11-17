@@ -22,7 +22,7 @@ RSpec.describe 'Wasm grammar linking' do
   end
 
   around do |example|
-    @linker = Mallorn::WasmLinker.new(Pathname(__dir__).parent / 'tree-sitter.wasm')
+    @linker = Mallorn::Runtime.new
     @runtime = Mallorn::Runtime.new
     example.run
   ensure
@@ -31,7 +31,7 @@ RSpec.describe 'Wasm grammar linking' do
   end
 
   def load_javascript(bytes = @bytes)
-    @linker.load(bytes, name: 'javascript')
+    @linker.load_language_bytes(bytes, name: 'javascript')
   end
 
   # Exercise the linker's ABI directly while the public Parser/Node API is
@@ -106,14 +106,14 @@ RSpec.describe 'Wasm grammar linking' do
 
   it 'rejects an incompatible ABI and can subsequently load a valid module' do
     expect do
-      @linker.load(@incompatible, name: 'incompatible')
+      @linker.load_language_bytes(@incompatible, name: 'incompatible')
     end.to raise_error(Mallorn::IncompatibleLanguageError, /ABI 999/)
     expect(parse(load_javascript, 'let x = 1;')).to include('(lexical_declaration ')
   end
 
   it 'rejects a missing grammar export' do
     expect do
-      @linker.load(@bytes, name: 'missing')
+      @linker.load_language_bytes(@bytes, name: 'missing')
     end.to raise_error(Mallorn::LinkError, /Missing grammar export tree_sitter_missing/)
     expect(parse(load_javascript, 'let x = 1;')).to include('(lexical_declaration ')
   end
@@ -121,7 +121,7 @@ RSpec.describe 'Wasm grammar linking' do
   it 'recovers from a trapping initializer without invalidating existing languages' do
     first = load_javascript
     expect do
-      @linker.load(@trapping, name: 'incompatible')
+      @linker.load_language_bytes(@trapping, name: 'incompatible')
     end.to raise_error(Mallorn::LinkError, /Cannot link grammar incompatible/)
     expect(parse(first, 'let before = 1;')).to include('(lexical_declaration ')
     expect(parse(load_javascript, 'let after = 2;')).to include('(lexical_declaration ')

@@ -9,10 +9,16 @@ RSpec.describe 'Tree-sitter Wasm build' do
     @store = Wasmtime::Store.new(engine, wasi_p1_config: Wasmtime::WasiConfig.new)
     linker = Wasmtime::Linker.new(engine)
     Wasmtime::WASI::P1.add_to_linker_sync(linker)
+    read = Wasmtime::Func.new(@store, [:i32, :i32, :i32, :i32, :i32], [:i32]) { |_caller, *_args| 0 }
+    cancel = Wasmtime::Func.new(@store, [], [:i32]) { |_caller| 0 }
+    linker.define(@store, 'mallorn', 'read', read)
+    linker.define(@store, 'mallorn', 'cancel', cancel)
     mod = Wasmtime::Module.from_file(engine, File.join(root, 'tree-sitter.wasm'))
     @instance = linker.instantiate(@store, mod)
     @instance.invoke('_initialize')
   end
+
+  after(:context) { @store.close }
 
   it 'reports the supported grammar ABI range' do
     minimum = @instance.invoke('mallorn_min_compatible_language_version')

@@ -5,3 +5,5 @@
 /tree-sitter.wasm
 /tree-sitter.wasm.tmp
 /node_modules/
+/doc/
+/.yardoc/

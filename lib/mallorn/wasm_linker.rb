@@ -2,11 +2,9 @@ module Mallorn
   # Internal linker for self-contained wasm32 dylink.0 grammar modules. Every
   # grammar uses this engine's memory, stack pointer, and function table.
   # Dependencies on other shared modules and GOT imports are not supported.
+  # @api private
   class WasmLinker
-    LoadedLanguage = Data.define(
-      :instance, :address, :allocation, :abi_version,
-      :symbol_count, :field_count, :state_count, :metadata
-    )
+    LinkedModule = Data.define(:instance, :memory_base, :memory_size)
     Layout = Data.define(:memory_size, :memory_alignment, :table_size, :table_alignment)
 
     # Reads binary sections without trusting their declared sizes or LEBs.
@@ -49,18 +47,24 @@ module Mallorn
       end
     end
 
-    def initialize(path)
+    def initialize(path, imports: {})
       @engine = Wasmtime::Engine.new
       @store = Wasmtime::Store.new(@engine, wasi_p1_config: Wasmtime::WasiConfig.new)
       linker = Wasmtime::Linker.new(@engine)
       Wasmtime::WASI::P1.add_to_linker_sync(linker)
+      imports.each do |namespace, functions|
+        functions.each do |name, (parameters, results, callback)|
+          function = Wasmtime::Func.new(@store, parameters, results, &callback)
+          linker.define(@store, namespace, name, function)
+        end
+      end
       mod = Wasmtime::Module.from_file(@engine, path.to_s)
       @instance = linker.instantiate(@store, mod)
       @instance.invoke('_initialize')
       @memory = @instance.export('memory').to_memory
       @table = @instance.export('__indirect_function_table').to_table
       @stack_pointer = @instance.export('__stack_pointer').to_global
-      @languages = []
+      @modules = []
     rescue Wasmtime::Error, Wasmtime::Trap => error
       @store&.close
       raise LinkError, "Cannot initialize Tree-sitter engine: #{error.message}"
@@ -68,7 +72,7 @@ module Mallorn
 
     def close
       @store.close
-      @languages.clear
+      @modules.clear
     end
 
     def closed?
@@ -110,9 +114,6 @@ module Mallorn
 
         linker = grammar_linker(mod, memory_base, table_base)
         instance = linker.instantiate(@store, mod)
-        entrypoint = instance.export("tree_sitter_#{name}")
-        raise LinkError, "Missing grammar export tree_sitter_#{name}" unless entrypoint
-
         instance.invoke('__wasm_apply_data_relocs') if instance.export('__wasm_apply_data_relocs')
         if instance.export('_initialize')
           instance.invoke('_initialize')
@@ -120,33 +121,11 @@ module Mallorn
           instance.invoke('__wasm_call_ctors')
         end
 
-        address = entrypoint.to_func.call & 0xffffffff
-        unless address >= memory_base && address + 4 <= memory_base + layout.memory_size
-          raise LinkError, 'Grammar returned a language pointer outside its data region'
-        end
-        abi_version = @memory.read_u32(address)
-        minimum = invoke('mallorn_min_compatible_language_version')
-        maximum = invoke('mallorn_language_version')
-        unless (minimum..maximum).cover?(abi_version)
-          raise IncompatibleLanguageError,
-                "Grammar ABI #{abi_version} is unsupported; engine accepts #{minimum}..#{maximum}"
-        end
-
-        metadata_pointer = invoke('mallorn_language_metadata', address) & 0xffffffff
-        metadata = unless metadata_pointer.zero?
-          major, minor, patch = @memory.read(metadata_pointer, 3).unpack('C3')
-          { major_version: major, minor_version: minor, patch_version: patch }.freeze
-        end
-        loaded = LoadedLanguage.new(
-          instance: instance, address: address, allocation: allocation,
-          abi_version: abi_version,
-          symbol_count: invoke('mallorn_language_symbol_count', address),
-          field_count: invoke('mallorn_language_field_count', address),
-          state_count: invoke('mallorn_language_state_count', address),
-          metadata: metadata
-        )
-        @languages << loaded
-        loaded
+        linked = LinkedModule.new(instance: instance, memory_base: memory_base, memory_size: layout.memory_size)
+        result = block_given? ? yield(linked) : linked
+        @modules << linked
+        loaded = true
+        result
       ensure
         unless loaded
           # Wasm tables cannot shrink. Clear failed modules' slots and leave
