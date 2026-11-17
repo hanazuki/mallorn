@@ -49,5 +49,4 @@ chunked input, cursors, cancellation, and query predicates.
 
 Mallorn is released under the MIT License. See [LICENSE.txt](LICENSE.txt).
 
-The published gem includes `tree-sitter.wasm`, a binary derived from Tree-sitter,
-which is covered by the license in [tree-sitter/LICENSE](tree-sitter/LICENSE).
+The published gem includes `tree-sitter.wasm`, a binary derived from Tree-sitter, which is licensed under MIT License. It also links other third-party libraries covered by OSS licesnse. See [third-party notices](licenses/README.md).

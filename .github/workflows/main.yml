@@ -29,8 +29,9 @@ jobs:
         with:
           version: '34'
           add-to-path: false
+      - run: bundle exec rake licenses
       - run: npm ci --ignore-scripts
-      - run: bundle exec rake build spec
+      - run: bundle exec rake spec
 
   build:
     needs: [test]
@@ -53,6 +54,7 @@ jobs:
         with:
           version: '34'
           add-to-path: false
+      - run: bundle exec rake licenses
       - uses: release-gems/action/build@v1.2.2
         with:
           sandbox: bubblewrap

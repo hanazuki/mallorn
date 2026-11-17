@@ -10,7 +10,7 @@ git submodule update --init tree-sitter
 export WASI_SDK_PATH=/path/to/wasi-sdk
 bundle install
 npm ci --ignore-scripts
-bundle exec rake build spec
+bundle exec rake spec
 ```
 
 ## Design decisions

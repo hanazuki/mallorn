@@ -1,6 +1,6 @@
 require 'rspec/core/rake_task'
-require 'rubygems/package'
 require 'rake/clean'
+require 'open-uri'
 
 root = Pathname(__dir__)
 tree_sitter = root / 'tree-sitter'
@@ -10,12 +10,35 @@ main = root / 'src/main.c'
 engine = source_dir / 'lib.c'
 output = root / 'tree-sitter.wasm'
 temporary = output.sub_ext('.wasm.tmp')
+licenses_dir = Pathname('licenses')
+license_sources = {
+  'LICENSE-wasi-libc-MIT.txt' => 'LICENSE-MIT',
+  'LICENSE-musl.txt' => 'libc-top-half/musl/COPYRIGHT',
+  'LICENSE-cloudlibc.txt' => 'libc-bottom-half/cloudlibc/LICENSE'
+}
+
+desc 'Fetch license notices matching the installed WASI SDK'
+task :licenses
+
+if sdk = ENV['WASI_SDK_PATH']
+  sdk_version = Pathname(sdk).expand_path / 'VERSION'
+  license_sources.each do |name, source|
+    target = licenses_dir / name
+    file target.to_s => sdk_version.to_s do
+      revision = sdk_version.read[/^wasi-libc: ([0-9a-f]{12,40})\r?$/, 1]
+      abort 'WASI SDK VERSION does not identify its wasi-libc revision' unless revision
+      url = "https://raw.githubusercontent.com/WebAssembly/wasi-libc/#{revision}/#{source}"
+      target.binwrite(URI.open(url, &:read))
+    end
+  end
+  task licenses: license_sources.keys.map { |name| (licenses_dir / name).to_s }
+end
 
 tree_sitter_sources = source_dir.glob('**/*.{c,h}') +
                       include_dir.glob('**/*.h') + [main, root / 'Rakefile']
 
 desc 'Compile the Tree-sitter engine to tree-sitter.wasm (requires WASI SDK)'
-task 'tree-sitter' => output.to_s
+task 'tree-sitter' => [:licenses, output.to_s]
 
 file output.to_s => tree_sitter_sources.map(&:to_s) do
   sdk = ENV['WASI_SDK_PATH'] or abort 'Set WASI_SDK_PATH to an installed WASI SDK directory.'
@@ -32,6 +55,7 @@ file output.to_s => tree_sitter_sources.map(&:to_s) do
        '-Wall', '-Wextra', '-I', include_dir.to_s, '-I', source_dir.to_s,
        '-Wl,--export-table', '-Wl,--growable-table', '-Wl,--export=__stack_pointer',
        main.to_s, engine.to_s, '-o', temporary.to_s
+
     temporary.rename(output)
   ensure
     temporary.unlink if temporary.exist?
@@ -39,29 +63,8 @@ file output.to_s => tree_sitter_sources.map(&:to_s) do
 end
 
 CLEAN.include(output.to_s, temporary.to_s)
+CLOBBER.include(*license_sources.keys.map { |name| (licenses_dir / name).to_s })
 
 RSpec::Core::RakeTask.new(:spec)
-
-gemspec_path = root / 'mallorn.gemspec'
-gemspec = Gem::Specification.load(gemspec_path.to_s)
-package_dir = root / 'pkg'
-package = package_dir / gemspec.file_name
-
-directory package_dir.to_s
-file package.to_s => [package_dir, gemspec_path, *gemspec.files.map { |path| root / path }].map(&:to_s) do
-  Dir.chdir(root) do
-    Gem::Package.build(gemspec, false, false, package.to_s)
-  end
-end
-
-CLOBBER.include(package_dir.to_s)
-
-desc 'Build the gem into pkg/'
-task gem: package.to_s
-
-task package: :gem
-
-desc 'Build the gem into pkg/'
-task build: :gem
 
 task default: :spec
