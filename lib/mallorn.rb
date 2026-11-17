@@ -313,67 +313,61 @@ module Mallorn
       )
     end
 
-    # Load a precompiled grammar from a file. The module must be self-contained
-    # wasm32 dylink.0 with supported imports and a compatible Tree-sitter ABI.
-    # Supported scanner imports are env.iswspace, env.iswalpha, env.malloc,
-    # env.calloc, and env.free, plus shared memory/table, stack, and relocation
-    # base imports. Additional shared-module dependencies and legacy dylink
-    # modules are rejected. The engine supports language ABI 13 through 15.
+    # Link and initialize a precompiled Wasm grammar module once. Select its
+    # languages with Grammar#language. Modules must be self-contained wasm32
+    # dylink.0 with supported imports. Supported scanner imports are env.iswspace,
+    # env.iswalpha, env.malloc, env.calloc, and env.free, plus shared memory/table,
+    # stack, and relocation base imports. Additional shared-module dependencies
+    # and legacy dylink modules are rejected.
+    # @param path [String, Pathname] Wasm grammar path
+    # @return [Grammar] a newly linked module owned by this runtime
+    # @raise [LinkError] linking fails or the module format/imports are unsupported
+    # @raise [ClosedError] this runtime is closed
+    # @see #load_grammar_bytes
+    def load_grammar(path)
+      load_grammar_bytes(Pathname(path).binread)
+    end
+
+    # Link and initialize a grammar module from bytes. Loaded modules remain
+    # resident until this runtime is closed or collected. Each call creates a
+    # separate module instance; retain the Grammar to share it across languages.
+    # Language exports and ABIs are validated when selecting a language.
+    # @param bytes [String] Wasm binary, without text transcoding
+    # @return [Grammar]
+    # @raise [LinkError] the module cannot be linked
+    # @raise [ClosedError] this runtime is closed
+    # @see #load_grammar
+    def load_grammar_bytes(bytes)
+      with_backend do
+        Grammar.new(runtime: self, linked: @linker.load(bytes))
+      end
+    end
+
+    # Load a module from a file and select one language. To share a module
+    # between multiple languages, use #load_grammar instead.
     # @param path [String, Pathname] Wasm grammar path
     # @param name [String] C identifier naming its tree_sitter_<name> export
     # @return [Language] a new language object owned by this runtime
     # @raise [ArgumentError] name is not a C identifier
-    # @raise [LinkError] linking fails or an import/module format is unsupported
+    # @raise [LinkError] linking fails or the requested export is missing
     # @raise [IncompatibleLanguageError] the grammar ABI is unsupported
     # @raise [ClosedError] this runtime is closed
     # @see #load_language_bytes
     def load_language(path, name:)
-      load_language_bytes(Pathname(path).binread, name: name)
+      load_language_bytes(Pathname(path).binread, name:)
     end
 
-    # Load a precompiled grammar from bytes. Loaded modules remain resident
-    # until this runtime is closed or collected.
+    # Load a module from bytes and select one language.
     # @param bytes [String] Wasm binary, without text transcoding
     # @param name [String] C identifier naming its tree_sitter_<name> export
     # @return [Language]
-    # @raise [LinkError] the module cannot be linked
+    # @raise [ArgumentError] name is not a C identifier
+    # @raise [LinkError] linking fails or the requested export is missing
     # @raise [IncompatibleLanguageError] the grammar ABI is unsupported
     # @raise [ClosedError] this runtime is closed
-    # @see #load_language
+    # @see #load_grammar_bytes
     def load_language_bytes(bytes, name:)
-      unless name.is_a?(String) && name.match?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
-        raise ArgumentError, 'Language name must be a C identifier'
-      end
-      name = name.dedup
-      with_backend do
-        @linker.load(bytes, name: name) do |linked|
-          entrypoint = linked.instance.export("tree_sitter_#{name}")
-          raise LinkError, "Missing grammar export tree_sitter_#{name}" unless entrypoint
-          address = entrypoint.to_func.call & 0xffffffff
-          unless address >= linked.memory_base && address + 4 <= linked.memory_base + linked.memory_size
-            raise LinkError, 'Grammar returned a language pointer outside its data region'
-          end
-          abi_version = memory.read_u32(address)
-          minimum = invoke('mallorn_min_compatible_language_version')
-          maximum = invoke('mallorn_language_version')
-          unless (minimum..maximum).cover?(abi_version)
-            raise IncompatibleLanguageError,
-                  "Grammar ABI #{abi_version} is unsupported; engine accepts #{minimum}..#{maximum}"
-          end
-          metadata_pointer = pointer('mallorn_language_metadata', address)
-          metadata = unless metadata_pointer.zero?
-            major, minor, patch = memory.read(metadata_pointer, 3).unpack('C3')
-            { major_version: major, minor_version: minor, patch_version: patch }.freeze
-          end
-          Language.new(
-            runtime: self, name:,
-            address:, abi_version:, metadata:,
-            symbol_count: invoke('mallorn_language_symbol_count', address),
-            field_count: invoke('mallorn_language_field_count', address),
-            state_count: invoke('mallorn_language_state_count', address)
-          )
-        end
-      end
+      load_grammar_bytes(bytes).language(name)
     end
 
     # Close the Wasm store, invalidating every associated object. Idempotent.
@@ -507,8 +501,70 @@ module Mallorn
     end
   end
 
-  # A loaded grammar shared by parsers, trees, and queries. Obtain one from
-  # {Runtime#load_language} or {Runtime#load_language_bytes}.
+  # A linked Wasm module that can export multiple Tree-sitter languages.
+  # Obtain one from Runtime#load_grammar or Runtime#load_grammar_bytes.
+  # Its languages share one module instance until the runtime is closed.
+  class Grammar
+    # @return [Runtime] owning runtime
+    attr_reader :runtime
+
+    # @api private
+    def initialize(runtime:, linked:)
+      @runtime = runtime
+      @linked = linked
+      @languages = {}
+    end
+
+    # Select a tree_sitter_<name> export and validate its language ABI.
+    # Repeated selections of the same name return the identical Language.
+    # A failed selection leaves the module available for other selections.
+    # The engine supports language ABI 13 through 15.
+    # @param name [String] C identifier naming the language export
+    # @return [Language]
+    # @raise [ArgumentError] name is not a C identifier
+    # @raise [LinkError] the export is missing or cannot provide a language
+    # @raise [IncompatibleLanguageError] the language ABI is unsupported
+    # @raise [ClosedError] the owning runtime is closed
+    def language(name)
+      unless name.match?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+        raise ArgumentError, 'Language name must be a C identifier'
+      end
+      name = name.dedup
+      @runtime.with_backend do |backend|
+        next @languages[name] if @languages.key?(name)
+        entrypoint = @linked.instance.export("tree_sitter_#{name}")
+        raise LinkError, "Missing grammar export tree_sitter_#{name}" unless entrypoint
+        address = entrypoint.to_func.call & 0xffffffff
+        unless address >= @linked.memory_base && address + 4 <= @linked.memory_base + @linked.memory_size
+          raise LinkError, 'Grammar returned a language pointer outside its data region'
+        end
+        abi_version = backend.memory.read_u32(address)
+        minimum = backend.invoke('mallorn_min_compatible_language_version')
+        maximum = backend.invoke('mallorn_language_version')
+        unless (minimum..maximum).cover?(abi_version)
+          raise IncompatibleLanguageError,
+                "Grammar ABI #{abi_version} is unsupported; engine accepts #{minimum}..#{maximum}"
+        end
+        metadata_pointer = backend.pointer('mallorn_language_metadata', address)
+        metadata = unless metadata_pointer.zero?
+          version = backend.memory.read(metadata_pointer, 3).unpack('C3')
+          { major_version: version[0], minor_version: version[1], patch_version: version[2] }.freeze
+        end
+        @languages[name] = Language.new(
+          runtime: @runtime, name:,
+          address:, abi_version:, metadata:,
+          symbol_count: backend.invoke('mallorn_language_symbol_count', address),
+          field_count: backend.invoke('mallorn_language_field_count', address),
+          state_count: backend.invoke('mallorn_language_state_count', address)
+        )
+      end
+    rescue Wasmtime::Error, Wasmtime::Trap => error
+      raise LinkError, "Cannot select language #{name}: #{error.message}"
+    end
+  end
+
+  # A loaded language shared by parsers, trees, and queries. Obtain one from
+  # {Grammar#language}, {Runtime#load_language}, or {Runtime#load_language_bytes}.
   class Language
     # @return [Runtime] owning runtime
     attr_reader :runtime

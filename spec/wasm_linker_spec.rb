@@ -7,18 +7,31 @@ RSpec.describe 'Wasm grammar linking' do
     @grammar = root / 'node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm'
     @bytes = @grammar.binread
 
-    Dir.mktmpdir('mallorn-incompatible-') do |directory|
-      output = Pathname(directory) / 'incompatible.wasm'
-      compiler = Pathname(ENV.fetch('WASI_SDK_PATH')) / 'bin/clang'
-      command = [compiler.to_s, '--target=wasm32-wasip1', '-fPIC', '-shared', '-nostdlib',
-                 '-Wl,--allow-undefined', '-Wl,--no-entry', '-Wl,--export=tree_sitter_incompatible',
-                 '-Wl,--export=__wasm_call_ctors',
-                 (root / 'spec/fixtures/incompatible_language.c').to_s, '-o', output.to_s]
-      system(*command, exception: true)
-      @incompatible = output.binread
-      system(*command, '-DTRAP_INITIALIZER', exception: true)
-      @trapping = output.binread
+    Dir.mktmpdir('mallorn-grammar-fixtures-') do |directory|
+      @incompatible = build_fixture(root, directory, 'incompatible_language',
+                                    exports: ['tree_sitter_incompatible'])
+      @trapping_initializer = build_fixture(root, directory, 'trapping_initializer',
+                                            exports: ['__wasm_call_ctors'])
+      @multi_language = build_fixture(root, directory, 'multi_language',
+                                     exports: ['tree_sitter_first', 'tree_sitter_first_alias',
+                                               'tree_sitter_second'])
+      @invalid_pointer = build_fixture(root, directory, 'invalid_language_pointer',
+                                      exports: ['tree_sitter_invalid_pointer'])
+      @trapping_entrypoint = build_fixture(root, directory, 'trapping_language_entrypoint',
+                                          exports: ['tree_sitter_trapping'])
     end
+  end
+
+  def build_fixture(root, directory, name, exports:)
+    output = Pathname(directory) / "#{name}.wasm"
+    compiler = Pathname(ENV.fetch('WASI_SDK_PATH')) / 'bin/clang'
+    system(compiler.to_s, '--target=wasm32-wasip1', '-fPIC', '-shared', '-nostdlib',
+           '-Wl,--allow-undefined', '-Wl,--no-entry',
+           *exports.map { |name| "-Wl,--export=#{name}" },
+           '-I', (root / 'tree-sitter/lib/src').to_s,
+           (root / "spec/fixtures/#{name}.c").to_s, '-o', output.to_s,
+           exception: true)
+    output.binread
   end
 
   around do |example|
@@ -68,6 +81,86 @@ RSpec.describe 'Wasm grammar linking' do
     expect(language.symbol_count).to be_positive
     expect(language.field_count).to be_positive
     expect(language.state_count).to be_positive
+  end
+
+  it 'loads a grammar from a path and caches languages by name' do
+    grammar = @runtime.load_grammar(@grammar)
+    expect(grammar).to be_a(Mallorn::Grammar)
+    expect(grammar.runtime).to equal(@runtime)
+    language = grammar.language('javascript')
+    name = +'javascript'
+    expect(grammar.language(name)).to equal(language)
+    name.replace('missing')
+    expect(grammar.language('javascript')).to equal(language)
+    expect(language.name).to eq('javascript')
+    expect(language.metadata).to eq(major_version: 0, minor_version: 25, patch_version: 0)
+  end
+
+  it 'selects multiple language exports from one linked module' do
+    grammar = @linker.load_grammar_bytes(@multi_language)
+    first = grammar.language('first')
+    second = grammar.language('second')
+    expect(second).not_to equal(first)
+    expect(second.name).to eq('second')
+    expect(second.address).not_to eq(first.address)
+    expect(first.metadata).to eq(major_version: 1, minor_version: 2, patch_version: 3)
+    expect(second.metadata).to eq(major_version: 4, minor_version: 5, patch_version: 6)
+    expect(first.symbol_count).to eq(3)
+    expect(second.symbol_count).to eq(5)
+    expect(first.field_count).to eq(1)
+    expect(second.field_count).to eq(2)
+    expect(first.state_count).to eq(2)
+    expect(second.state_count).to eq(4)
+    # The aliases return the same pointer only when they share an instance.
+    expect(grammar.language('first_alias').address).to eq(first.address)
+    expect(grammar.language('second')).to equal(second)
+  end
+
+  it 'keeps a grammar usable after selecting a missing export' do
+    grammar = @runtime.load_grammar_bytes(@bytes)
+    expect { grammar.language('missing') }
+      .to raise_error(Mallorn::LinkError, /Missing grammar export/)
+    expect(grammar.language('javascript').symbol_count).to be_positive
+  end
+
+  it 'checks the language ABI on selection rather than when linking a grammar' do
+    grammar = @runtime.load_grammar_bytes(@incompatible)
+    expect { grammar.language('incompatible') }
+      .to raise_error(Mallorn::IncompatibleLanguageError, /ABI 999/)
+  end
+
+  it 'rejects an invalid language pointer without invalidating existing languages' do
+    javascript = load_javascript
+    grammar = @linker.load_grammar_bytes(@invalid_pointer)
+    expect { grammar.language('invalid_pointer') }
+      .to raise_error(Mallorn::LinkError, /outside its data region/)
+    expect(parse(javascript, 'let x = 1;')).to include('(lexical_declaration ')
+  end
+
+  it 'reports a trapping entry point without invalidating existing languages' do
+    javascript = load_javascript
+    grammar = @linker.load_grammar_bytes(@trapping_entrypoint)
+    expect { grammar.language('trapping') }
+      .to raise_error(Mallorn::LinkError, /Cannot select language trapping/)
+    expect(parse(javascript, 'let x = 1;')).to include('(lexical_declaration ')
+  end
+
+  it 'rejects invalid language names' do
+    grammar = @runtime.load_grammar_bytes(@bytes)
+    ['', 'javascript-extra', "javascript\n"].each do |name|
+      expect { grammar.language(name) }.to raise_error(ArgumentError, /C identifier/)
+      expect { @runtime.load_language_bytes(@bytes, name:) }
+        .to raise_error(ArgumentError, /C identifier/)
+    end
+  end
+
+  it 'rejects cached and new language selections after runtime close' do
+    grammar = @runtime.load_grammar_bytes(@multi_language)
+    grammar.language('first')
+    @runtime.close
+    expect { grammar.language('first') }.to raise_error(Mallorn::ClosedError)
+    expect { grammar.language('second') }.to raise_error(Mallorn::ClosedError)
+    expect { @runtime.load_grammar_bytes(@bytes) }.to raise_error(Mallorn::ClosedError)
   end
 
   Mallorn::SUPPORTED_ENCODINGS.each do |encoding|
@@ -121,8 +214,8 @@ RSpec.describe 'Wasm grammar linking' do
   it 'recovers from a trapping initializer without invalidating existing languages' do
     first = load_javascript
     expect do
-      @linker.load_language_bytes(@trapping, name: 'incompatible')
-    end.to raise_error(Mallorn::LinkError, /Cannot link grammar incompatible/)
+      @linker.load_grammar_bytes(@trapping_initializer)
+    end.to raise_error(Mallorn::LinkError, /Cannot link grammar module/)
     expect(parse(first, 'let before = 1;')).to include('(lexical_declaration ')
     expect(parse(load_javascript, 'let after = 2;')).to include('(lexical_declaration ')
   end

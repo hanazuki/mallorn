@@ -87,7 +87,7 @@ module Mallorn
 
     attr_reader :memory
 
-    def load(bytes, name:)
+    def load(bytes)
       bytes = String.try_convert(bytes) or raise TypeError, 'Expected Wasm bytes as a String'
       bytes = bytes.b
       layout = read_layout(bytes)
@@ -122,10 +122,9 @@ module Mallorn
         end
 
         linked = LinkedModule.new(instance: instance, memory_base: memory_base, memory_size: layout.memory_size)
-        result = block_given? ? yield(linked) : linked
         @modules << linked
         loaded = true
-        result
+        linked
       ensure
         unless loaded
           # Wasm tables cannot shrink. Clear failed modules' slots and leave
@@ -138,7 +137,7 @@ module Mallorn
         end
       end
     rescue Wasmtime::Error, Wasmtime::Trap => error
-      raise LinkError, "Cannot link grammar #{name}: #{error.message}"
+      raise LinkError, "Cannot link grammar module: #{error.message}"
     end
 
     private
