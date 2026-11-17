@@ -199,11 +199,9 @@ RSpec.describe 'Mallorn public API' do
     expect(@parser.parse('let x;').root_node.has_error?).to be(false)
   end
 
-  it 'rejects unsupported encodings, malformed reads, and incompatible reuse' do
+  it 'rejects unsupported encodings and incompatible reuse' do
     expect { @parser.parse('abc'.b) }.to raise_error(Mallorn::UnsupportedEncodingError)
     input = Fragments.new('let x;')
-    allow(input).to receive(:read_at).and_return(12)
-    expect { @parser.parse(input) }.to raise_error(TypeError)
     allow(input).to receive(:read_at).and_return('abc'.b)
     expect { @parser.parse(input) }.to raise_error(Mallorn::UnsupportedEncodingError)
     tree = @parser.parse('let x;')
@@ -250,8 +248,7 @@ RSpec.describe 'Mallorn public API' do
     expect(name.named_child(0)).to be_nil
     expect(name.last_child).to be_nil
     expect(name.last_named_child).to be_nil
-    expect { root.child(-1) }.to raise_error(ArgumentError)
-    expect { root.named_child(1.5) }.to raise_error(TypeError)
+    expect { root.child(-1) }.to raise_error(RangeError)
     expect(root.descendant_for_byte_range(6, 7)).to eq(name)
     expect(root.descendant_for_byte_range(6, 7, named: true)).to eq(name)
     expect(root.descendant_for_point_range(Mallorn::Point.new(0, 6), Mallorn::Point.new(0, 7))).to eq(name)
@@ -323,7 +320,6 @@ RSpec.describe 'Mallorn public API' do
     expect(@language.lookahead(node.parse_state)).to be_a(Enumerator)
     expect(@language.lookahead(node.parse_state).to_a).to include(node.grammar_symbol_id)
     expect { @language.symbol_name(0x10000) }.to raise_error(ArgumentError)
-    expect { @language.lookahead(@language.state_count) }.to raise_error(ArgumentError)
   end
 
   it 'compiles queries and reports precise query errors' do

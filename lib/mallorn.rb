@@ -3,12 +3,12 @@ require 'wasmtime'
 require_relative 'mallorn/version'
 
 # Tree-sitter bindings backed by a Wasm engine and separately loaded grammars.
-# Source storage and revision management belong to the consumer.
 # @see Runtime
 # @see Parser
 module Mallorn
-  # Supported source encodings. All input and edit coordinates count bytes
-  # in the selected encoding, rather than characters or UTF-16 code units.
+  # Supported source encodings.
+  #
+  # @note This array must be in sync with TSInputEncoding.
   SUPPORTED_ENCODINGS = [Encoding::UTF_8, Encoding::UTF_16LE, Encoding::UTF_16BE].freeze
 
   # Base class for Mallorn failures.
@@ -44,14 +44,8 @@ module Mallorn
     end
   end
 
-  # All offsets and columns count bytes in the source encoding. Rows are
-  # zero-based; LF separates rows. Byte intervals are half-open.
-  # An immutable zero-based position. Columns count source bytes, including in
-  # UTF-16; LF advances the row. Points compare lexicographically by row/column
-  # and can be used as Range endpoints. Constructors accept positional or
-  # keyword arguments, as do the other Data values in this module.
-  # @example
-  #   Point.new(2, 8) == Point.new(row: 2, column: 8)
+  # Location in the source code.
+  #
   # @!attribute [r] row
   #   @return [Integer] zero-based row
   # @!attribute [r] column
@@ -59,13 +53,15 @@ module Mallorn
   Point = Data.define(:row, :column) do
     include Comparable
 
-    # @param other [Point, Object]
+    # @param other [Point]
     # @return [Integer, nil] row/column comparison, or nil for a non-Point
     def <=>(other)
       other.is_a?(Point) ? [row, column] <=> [other.row, other.column] : nil
     end
   end
-  # An immutable half-open source interval in bytes and points.
+
+  # Half-open source interval in bytes and points.
+  #
   # @!attribute [r] start_byte
   #   @return [Integer] inclusive byte offset
   # @!attribute [r] end_byte
@@ -74,12 +70,12 @@ module Mallorn
   #   @return [Point] inclusive start position
   # @!attribute [r] end_point
   #   @return [Point] exclusive end position
-  # @see Parser#parse
-  # @see Node#span
   Span = Data.define(:start_byte, :end_byte, :start_point, :end_point)
-  # One edit mapping an old revision's interval to a new interval. The start
-  # and old end use the old revision; the new end uses the updated revision.
-  # All byte offsets/columns use that revision's original source encoding.
+
+  # Mapping from an old revision's interval to a new interval.
+  #
+  # The start and old end use the old revision; the new end uses the updated revision.
+  #
   # @!attribute [r] start_byte
   #   @return [Integer] start offset in both revisions
   # @!attribute [r] old_end_byte
@@ -92,18 +88,23 @@ module Mallorn
   #   @return [Point] exclusive old end position
   # @!attribute [r] new_end_point
   #   @return [Point] exclusive new end position
-  # @see Tree#edited
   InputEdit = Data.define(
     :start_byte, :old_end_byte, :new_end_byte,
     :start_point, :old_end_point, :new_end_point
   )
-  # A query capture. Repeated captures retain the same name on each occurrence.
+
+  # A query capture.
+  #
+  # Repeated captures retain the same name on each occurrence.
+  #
   # @!attribute [r] name
   #   @return [String] capture name without the @ prefix
   # @!attribute [r] node
   #   @return [Node] captured node, retaining its tree
   Capture = Data.define(:name, :node)
+
   # A complete, predicate-checked query match.
+  #
   # @!attribute [r] pattern_index
   #   @return [Integer] zero-based query pattern index
   # @!attribute [r] captures
@@ -111,67 +112,71 @@ module Mallorn
   # @!attribute [r] properties
   #   @return [Hash] frozen properties from set! directives and custom handlers
   Match = Data.define(:pattern_index, :captures, :properties)
+
   # A predicate argument referring to a capture rather than a literal string.
+  #
   # @!attribute [r] name
   #   @return [String] capture name without the @ prefix
   CaptureReference = Data.define(:name)
+
   # An introspected predicate or directive, including unknown operations.
+  #
   # @!attribute [r] name
   #   @return [String] operation name without #, for example 'eq?' or 'set!'
   # @!attribute [r] arguments
   #   @return [Array<String, CaptureReference>] frozen, ordered arguments
   Predicate = Data.define(:name, :arguments)
 
-  # Internal ABI validation and copying helpers; consumers own source storage.
   # @api private
   module Internal
-    MAX = 0xffffffff
+    UINT_MAX = 0xffffffff
 
-    def self.uint(value, maximum = MAX)
-      raise TypeError, 'Expected an Integer' unless value.is_a?(Integer)
-      raise ArgumentError, "Integer must be in 0..#{maximum}" unless value.between?(0, maximum)
-      value
-    end
-
-    def self.point(value)
-      raise TypeError, 'Expected a Mallorn::Point' unless value.is_a?(Point)
-      [uint(value.row), uint(value.column)]
+    def self.pack_uint32(*values)
+      values.map! do |value|
+        value = value.to_int
+        raise RangeError, "Integer must be in 0..#{UINT_MAX}" unless value.between?(0, UINT_MAX)
+        value
+      end.pack('L<*')
     end
 
     def self.ordered(first, last)
-      raise ArgumentError, 'Range ends before its start' if (first <=> last).positive?
+      raise ArgumentError, 'Range ends before its start' if first > last
     end
 
-    def self.span(value)
-      raise TypeError, 'Expected a Mallorn::Span' unless value.is_a?(Span)
-      first, last = uint(value.start_byte), uint(value.end_byte)
-      start_point, end_point = point(value.start_point), point(value.end_point)
+    def self.pack_span(value)
+      first = value.start_byte
+      last = value.end_byte
+      start_point = value.start_point
+      end_point = value.end_point
       ordered(first, last)
       ordered(start_point, end_point)
-      [*start_point, *end_point, first, last].pack('L<*')
+      pack_uint32(start_point.row, start_point.column, end_point.row, end_point.column, first, last)
     end
 
-    def self.edit(value)
-      raise TypeError, 'Expected a Mallorn::InputEdit' unless value.is_a?(InputEdit)
-      first, old_end, new_end = uint(value.start_byte), uint(value.old_end_byte), uint(value.new_end_byte)
-      start_point, old_point, new_point = point(value.start_point), point(value.old_end_point), point(value.new_end_point)
+    def self.pack_edit(value)
+      first = value.start_byte
+      old_end = value.old_end_byte
+      new_end = value.new_end_byte
+      start_point = value.start_point
+      old_point = value.old_end_point
+      new_point = value.new_end_point
       ordered(first, old_end)
       ordered(first, new_end)
       ordered(start_point, old_point)
       ordered(start_point, new_point)
-      [first, old_end, new_end, *start_point, *old_point, *new_point].pack('L<*')
+      pack_uint32(first, old_end, new_end, start_point.row, start_point.column,
+                  old_point.row, old_point.column, new_point.row, new_point.column)
     end
 
-    def self.ranges(values)
+    def self.pack_ranges(values)
       return nil if values.nil?
-      raise TypeError, 'Expected an Array of Spans' unless values.is_a?(Array)
       raise ArgumentError, 'Included ranges cannot be empty' if values.empty?
       previous = nil
       bytes = values.map do |value|
-        packed = span(value)
+        packed = pack_span(value)
         if previous
           ordered(previous.end_byte, value.start_byte)
-          ordered(point(previous.end_point), point(value.start_point))
+          ordered(previous.end_point, value.start_point)
         end
         previous = value
         packed
@@ -179,24 +184,15 @@ module Mallorn
       bytes.join
     end
 
-    def self.cancellation(value)
-      raise TypeError, 'Cancellation must respond to call' if value && !value.respond_to?(:call)
-      value
-    end
-
     def self.cancel!(value)
       raise CancelledError, 'Operation cancelled' if value&.call
     end
 
     def self.input(source)
-      unless source.is_a?(String) || (source.respond_to?(:encoding) && source.respond_to?(:read_at))
-        raise TypeError, 'Input must be a String or respond to encoding and read_at'
-      end
       encoding = source.encoding
       unless SUPPORTED_ENCODINGS.include?(encoding)
         raise UnsupportedEncodingError, "Unsupported source encoding: #{encoding}"
       end
-      uint(source.bytesize) if source.is_a?(String)
       [source.is_a?(String) ? source.dup.freeze : source, encoding]
     end
 
@@ -231,13 +227,11 @@ module Mallorn
         hint = advance(point, bytes, encoding, offset, previous_byte: previous_byte)
         chunk = source.read_at(offset + bytes.bytesize, point: hint)
         break if chunk.nil?
-        raise TypeError, 'read_at must return a String or nil' unless chunk.is_a?(String)
         unless chunk.encoding == encoding
           raise UnsupportedEncodingError, 'read_at returned a different source encoding'
         end
         break if chunk.empty?
         bytes << chunk.byteslice(0, capacity - bytes.bytesize).b
-        uint(offset + bytes.bytesize)
         break if bytes.bytesize >= [4, capacity].min
       end
       bytes
@@ -290,6 +284,8 @@ module Mallorn
     # @api private
     attr_reader :release_queue
 
+    attr_reader :language_abi_versions
+
     # Create an independent Wasm runtime. Grammars and trees from different
     # runtimes cannot exchange backend handles.
     # @raise [LinkError] the packaged engine cannot be instantiated
@@ -312,6 +308,12 @@ module Mallorn
           'cancel' => [[], [:i32], method(:cancel_operation)]
         } }
       )
+      @language_abi_versions = invoke('mallorn_min_compatible_language_version')..invoke('mallorn_language_version')
+    end
+
+    # @api private
+    def support_abi_version?(version)
+      @language_abi_versions.cover?(version)
     end
 
     # Link and initialize a precompiled Wasm grammar module once. Select its
@@ -545,20 +547,15 @@ module Mallorn
           raise LinkError, 'Grammar returned a language pointer outside its data region'
         end
         abi_version = backend.memory.read_u32(address)
-        minimum = backend.invoke('mallorn_min_compatible_language_version')
-        maximum = backend.invoke('mallorn_language_version')
-        unless (minimum..maximum).cover?(abi_version)
-          raise IncompatibleLanguageError,
-                "Grammar ABI #{abi_version} is unsupported; engine accepts #{minimum}..#{maximum}"
-        end
-        metadata_pointer = backend.pointer('mallorn_language_metadata', address)
-        metadata = unless metadata_pointer.zero?
-          version = backend.memory.read(metadata_pointer, 3).unpack('C3')
-          { major_version: version[0], minor_version: version[1], patch_version: version[2] }.freeze
+        unless backend.support_abi_version?(abi_version)
+          raise IncompatibleLanguageError, "Grammar ABI #{abi_version} is unsupported"
         end
         @languages[name] = Language.new(
-          runtime: @runtime, name:,
-          address:, abi_version:, metadata:,
+          runtime: @runtime,
+          name:,
+          address:,
+          abi_version:,
+          metadata: language_metadata(address),
           symbol_count: backend.invoke('mallorn_language_symbol_count', address),
           field_count: backend.invoke('mallorn_language_field_count', address),
           state_count: backend.invoke('mallorn_language_state_count', address)
@@ -566,6 +563,16 @@ module Mallorn
       end
     rescue Wasmtime::Error, Wasmtime::Trap => error
       raise LinkError, "Cannot select language #{name}: #{error.message}"
+    end
+
+    private
+
+    def language_metadata(address)
+      metadata_pointer = @runtime.pointer('mallorn_language_metadata', address)
+      return nil if metadata_pointer.zero?
+
+      version = @runtime.memory.read(metadata_pointer, 3).unpack('C3')
+      { major_version: version[0], minor_version: version[1], patch_version: version[2] }.freeze
     end
   end
 
@@ -643,7 +650,6 @@ module Mallorn
     # @return [String, nil] field name; nil for ID zero
     # @raise [ArgumentError] the field ID is invalid
     def field_name(field_id)
-      Internal.uint(field_id, @field_count)
       @runtime.with_backend do |backend|
         pointer = backend.pointer('mallorn_language_field_name', @address, field_id)
         backend.cstring(pointer) unless pointer.zero?
@@ -653,7 +659,6 @@ module Mallorn
     # @param name [String] field name
     # @return [Integer, nil] field ID, or nil if the field is absent
     def field_id(name)
-      name = String.try_convert(name) or raise TypeError, 'Expected a field name String'
       name = name.encode(Encoding::UTF_8)
       @runtime.with_backend do |backend|
         backend.buffer(name) do |buffer|
@@ -669,7 +674,6 @@ module Mallorn
     # @raise [ArgumentError] an ID is invalid
     # @see #lookahead
     def next_state(state, symbol_id)
-      Internal.uint(state, @state_count - 1)
       validate_symbol(symbol_id)
       @runtime.with_backend { |backend| backend.invoke('mallorn_language_next_state', @address, state, symbol_id) }
     end
@@ -680,7 +684,6 @@ module Mallorn
     # @example
     #   language.lookahead(node.parse_state).map { |id| language.symbol_name(id) }
     def lookahead(state)
-      Internal.uint(state, @state_count - 1)
       symbols = @runtime.with_backend do |backend|
         backend.buffer(4) do |count|
           pointer = backend.pointer('mallorn_language_lookahead', @address, state, count)
@@ -705,7 +708,6 @@ module Mallorn
     private
 
     def validate_symbol(value)
-      Internal.uint(value, 0xffff)
       raise ArgumentError, 'Unknown symbol ID' unless value < @symbol_count || value == 0xffff
     end
 
@@ -726,7 +728,6 @@ module Mallorn
     # @raise [ClosedError] its runtime is closed
     # @see #parse
     def initialize(language:)
-      raise TypeError, 'Expected a Language' unless language.is_a?(Language)
       @language = language
       @operation = Mutex.new
       @handle = language.runtime.with_backend do |backend|
@@ -786,12 +787,8 @@ module Mallorn
     def parse(source, old_tree: nil, included_ranges: nil, cancellation: nil)
       operate do
         source, encoding = Internal.input(source)
-        ranges = Internal.ranges(included_ranges)
-        Internal.cancellation(cancellation)
-        if old_tree
-          raise TypeError, 'Expected a Tree' unless old_tree.is_a?(Tree)
-          old_tree.compatible!(@language, encoding)
-        end
+        ranges = Internal.pack_ranges(included_ranges)
+        old_tree&.compatible!(@language, encoding)
         @language.runtime.with_backend do |backend|
           parser = @handle.address
           address = 0
@@ -935,7 +932,7 @@ module Mallorn
     #   reuse.changed_ranges(updated)
     # @see Parser#parse
     def edited(*edits)
-      packed = edits.map { |edit| Internal.edit(edit) }
+      packed = edits.map { |edit| Internal.pack_edit(edit) }
       @runtime.with_backend do |backend|
         pointer = backend.pointer('mallorn_tree_copy', address)
         begin
@@ -960,7 +957,6 @@ module Mallorn
     # @raise [UnsupportedEncodingError] source encodings differ
     # @note These are syntactic differences, not a log of all textual edits.
     def changed_ranges(new_tree)
-      raise TypeError, 'Expected a Tree' unless new_tree.is_a?(Tree)
       new_tree.compatible!(@language, @encoding)
       @runtime.with_backend { |backend| backend.ranges('mallorn_tree_changed_ranges', address, new_tree.address) }
     end
@@ -1142,17 +1138,15 @@ module Mallorn
     # @param index [Integer] nonnegative zero-based child index
     # @return [Node, nil] child, or nil if absent
     # @raise [ArgumentError] index is negative or exceeds wasm32
-    # @raise [TypeError] index is not an Integer
     def child(index)
-      related('mallorn_node_child', Internal.uint(index))
+      related('mallorn_node_child', index)
     end
 
     # @param index [Integer] nonnegative zero-based child index
     # @return [Node, nil] child, or nil if absent
     # @raise [ArgumentError] index is negative or exceeds wasm32
-    # @raise [TypeError] index is not an Integer
     def named_child(index)
-      related('mallorn_node_named_child', Internal.uint(index))
+      related('mallorn_node_named_child', index)
     end
 
     # @param name [String] grammar field name
@@ -1185,7 +1179,6 @@ module Mallorn
     # @param index [Integer] nonnegative index among all children
     # @return [String, nil] field name, or nil if the field/child is absent
     def field_name_for_child(index)
-      Internal.uint(index)
       @tree.runtime.with_backend do |backend|
         backend.buffer(@bytes) do |input|
           pointer = backend.pointer('mallorn_node_field', input, index)
@@ -1227,8 +1220,6 @@ module Mallorn
     # @return [Node, nil] smallest descendant spanning the range
     # @raise [ArgumentError] coordinates are reversed, negative, or exceed wasm32
     def descendant_for_byte_range(first, last, named: false)
-      Internal.uint(first)
-      Internal.uint(last)
       Internal.ordered(first, last)
       related(named ? 'mallorn_node_named_descendant_for_byte_range' : 'mallorn_node_descendant_for_byte_range', first, last)
     end
@@ -1239,10 +1230,9 @@ module Mallorn
     # @return [Node, nil] smallest descendant spanning the range
     # @raise [ArgumentError] coordinates are reversed, negative, or exceed wasm32
     def descendant_for_point_range(first, last, named: false)
-      start_point, end_point = Internal.point(first), Internal.point(last)
-      Internal.ordered(start_point, end_point)
+      Internal.ordered(first, last)
       related(named ? 'mallorn_node_named_descendant_for_point_range' : 'mallorn_node_descendant_for_point_range',
-              *start_point, *end_point)
+              first.row, first.column, last.row, last.column)
     end
 
     # @return [TreeCursor] cursor initially positioned on this node
@@ -1333,7 +1323,6 @@ module Mallorn
     # @api private
     # @see Node#walk
     def initialize(node, handle: nil)
-      raise TypeError, 'Expected a Node' unless node.is_a?(Node)
       @tree = node.tree
       if handle
         @handle = handle
@@ -1402,7 +1391,6 @@ module Mallorn
     # @return [self]
     # @raise [IncompatibleRuntimeError] node belongs to another runtime
     def reset(node)
-      raise TypeError, 'Expected a Node' unless node.is_a?(Node)
       unless node.tree.runtime.equal?(@tree.runtime)
         raise IncompatibleRuntimeError, 'Objects belong to different runtimes'
       end
@@ -1458,8 +1446,6 @@ module Mallorn
     # @raise [QueryError] compilation fails; byte_offset and error_type describe it
     # @see Language#query
     def initialize(language:, pattern:)
-      raise TypeError, 'Expected a Language' unless language.is_a?(Language)
-      pattern = String.try_convert(pattern) or raise TypeError, 'Expected a query String'
       pattern = pattern.encode(Encoding::UTF_8)
       @language = language
       @predicates = []
@@ -1522,7 +1508,7 @@ module Mallorn
     def predicates(pattern_index)
       @language.runtime.check_open!
       @handle.address
-      @predicates.fetch(Internal.uint(pattern_index, @pattern_count - 1))
+      @predicates.fetch(pattern_index)
     end
 
     # Custom handlers receive (Predicate, Match). Predicates return a truthy
@@ -1600,8 +1586,6 @@ module Mallorn
     # @param handlers [Hash] custom predicate/directive handlers
     # @see Query#cursor
     def initialize(query:, handlers: {})
-      raise TypeError, 'Expected a Query' unless query.is_a?(Query)
-      raise TypeError, 'Expected a handlers Hash' unless handlers.is_a?(Hash)
       @query = query
       @handlers = handlers
       @operation = Mutex.new
@@ -1729,27 +1713,37 @@ module Mallorn
       end
     end
 
-    def range(value, points: false)
-      return points ? [0, 0, Internal::MAX, Internal::MAX] : [0, Internal::MAX] unless value
-      unless value.is_a?(Range) && value.exclude_end? && value.begin && value.end
+    def byte_range_limits(value)
+      return [0, Internal::UINT_MAX] unless value
+      unless value.exclude_end? && value.begin && value.end
         raise ArgumentError, 'Expected a finite half-open Range'
       end
-      first, last = points ? [Internal.point(value.begin), Internal.point(value.end)] : [Internal.uint(value.begin), Internal.uint(value.end)]
+      first = value.begin
+      last = value.end
       Internal.ordered(first, last)
-      [first, last].flatten
+      [first, last]
+    end
+
+    def point_range_limits(value)
+      return [0, 0, Internal::UINT_MAX, Internal::UINT_MAX] unless value
+      unless value.exclude_end? && value.begin && value.end
+        raise ArgumentError, 'Expected a finite half-open Range'
+      end
+      first = value.begin
+      last = value.end
+      Internal.ordered(first, last)
+      [first.row, first.column, last.row, last.column]
     end
 
     def execute(node, capture_order, byte_range, point_range, match_limit, max_start_depth, cancellation)
       raise Error, 'Query cursor is already in use' unless @operation.try_lock
       begin
-        raise TypeError, 'Expected a Node' unless node.is_a?(Node)
         node.tree.compatible!(@query.language)
-        Internal.cancellation(cancellation)
-        bytes = range(byte_range)
-        points = range(point_range, points: true)
-        limit = match_limit.nil? ? Internal::MAX : Internal.uint(match_limit)
+        bytes = byte_range_limits(byte_range)
+        points = point_range_limits(point_range)
+        limit = match_limit.nil? ? Internal::UINT_MAX : match_limit
         raise ArgumentError, 'Match limit must be positive' if limit.zero?
-        depth = max_start_depth.nil? ? Internal::MAX : Internal.uint(max_start_depth)
+        depth = max_start_depth.nil? ? Internal::UINT_MAX : max_start_depth
         @exceeded = false
         @handle.address
         @query.address
@@ -1758,7 +1752,7 @@ module Mallorn
         runtime = @query.language.runtime
         runtime.with_backend do |backend|
           backend.buffer(node.bytes) do |input|
-            backend.buffer([*bytes, *points, limit, depth].pack('L<*')) do |limits|
+            backend.buffer(Internal.pack_uint32(*bytes, *points, limit, depth)) do |limits|
               backend.invoke('mallorn_query_cursor_exec', @handle.address, @query.address, input, limits)
               @tree = node.tree
             end
@@ -1824,9 +1818,6 @@ module Mallorn
         if (handler = @handlers[name])
           value = handler.call(predicate, Match.new(match.pattern_index, match.captures, properties.dup.freeze))
           if name.end_with?('!')
-            unless value.nil? || value.is_a?(Hash)
-              raise QueryError, "Directive ##{name} must return a Hash or nil"
-            end
             properties.merge!(value) if value
           else
             return nil unless value
@@ -1844,7 +1835,6 @@ module Mallorn
       captures.select { |capture| capture.name == reference.name }.map { |capture| capture.node.text.encode(Encoding::UTF_8) }
     end
 
-    # Regex predicates use RE2 for matching user-provided expressions.
     def text_predicate(predicate, captures)
       name, args = predicate.name, predicate.arguments
       left = texts(args[0], captures)

@@ -88,7 +88,6 @@ module Mallorn
     attr_reader :memory
 
     def load(bytes)
-      bytes = String.try_convert(bytes) or raise TypeError, 'Expected Wasm bytes as a String'
       bytes = bytes.b
       layout = read_layout(bytes)
       mod = Wasmtime::Module.new(@engine, bytes)
@@ -143,6 +142,8 @@ module Mallorn
     private
 
     def i32(value)
+      value = value.to_int
+      raise RangeError, 'Integer must be in 0..4294967295' unless value.between?(0, 0xffffffff)
       value >= 0x80000000 ? value - 0x100000000 : value
     end
 
