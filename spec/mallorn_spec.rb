@@ -412,6 +412,14 @@ RSpec.describe 'Mallorn public API' do
     expect { @language.query('((identifier) @id (#match? @id "["))').cursor }.to raise_error(Mallorn::QueryError)
   end
 
+  it 'matches Unicode substrings with RE2 in each supported source encoding' do
+    pattern = '((identifier) @id (#match? @id "fé"))'
+    Mallorn::SUPPORTED_ENCODINGS.each do |encoding|
+      captures = query_captures(pattern, 'café; other;'.encode(encoding))
+      expect(captures).to eq(['café'])
+    end
+  end
+
   it 'filters byte/point ranges and resets depth limits between executions' do
     tree = @parser.parse("x;\ny;\nz;")
     cursor = @language.query('(identifier) @id').cursor

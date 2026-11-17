@@ -1,3 +1,4 @@
+require 're2'
 require 'wasmtime'
 require_relative 'mallorn/version'
 
@@ -1529,7 +1530,7 @@ module Mallorn
     # Create an independent execution cursor. Standard text predicates are eq?,
     # not-eq?, match?, not-match?, their any- variants, and any-of?/not-any-of?.
     # Without any-, every captured node must satisfy the comparison. Regex predicates
-    # use Ruby Regexp semantics; node text is transcoded to UTF-8 for evaluation.
+    # use RE2 syntax; node text is transcoded to UTF-8 for evaluation.
     # set! assigns a literal property key and optional value to each match.
     #
     # Unknown operations, including property predicates such as is?, require
@@ -1714,10 +1715,9 @@ module Mallorn
           raise QueryError, "Invalid arguments for ##{name}"
         end
         if name.include?('match?')
-          begin
-            @regexps[args[1]] ||= Regexp.new(args[1])
-          rescue RegexpError => error
-            raise QueryError, "Invalid query regular expression: #{error.message}"
+          expression = @regexps[args[1]] ||= RE2::Regexp.new(args[1], log_errors: false)
+          unless expression.ok?
+            raise QueryError, "Invalid query regular expression: #{expression.error}"
           end
         end
       elsif name == 'set!'
@@ -1844,7 +1844,7 @@ module Mallorn
       captures.select { |capture| capture.name == reference.name }.map { |capture| capture.node.text.encode(Encoding::UTF_8) }
     end
 
-    # Regex predicates deliberately use Ruby's Regexp semantics.
+    # Regex predicates use RE2 for matching user-provided expressions.
     def text_predicate(predicate, captures)
       name, args = predicate.name, predicate.arguments
       left = texts(args[0], captures)
@@ -1855,7 +1855,7 @@ module Mallorn
       negate = name.include?('not-')
       results = if name.include?('match?')
         expression = @regexps.fetch(args[1])
-        left.map { |text| expression.match?(text) != negate }
+        left.map { |text| expression.partial_match?(text) != negate }
       elsif args[1].is_a?(CaptureReference)
         right = texts(args[1], captures)
         return false unless left.length == right.length

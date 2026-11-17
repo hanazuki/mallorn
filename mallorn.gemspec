@@ -22,6 +22,7 @@ Gem::Specification.new do |spec|
   end
   spec.require_paths = ['lib']
 
+  spec.add_dependency 're2', '~> 2.28'
   spec.add_dependency 'wasmtime', '~> 50.0'
 
   spec.metadata = {
