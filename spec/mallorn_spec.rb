@@ -25,7 +25,6 @@ RSpec.describe 'Mallorn public API' do
 
   before(:context) do
     root = Pathname(__dir__).parent
-    system('bundle', 'exec', 'rake', 'tree-sitter', chdir: root, exception: true)
     @grammar = root / 'node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm'
   end
 

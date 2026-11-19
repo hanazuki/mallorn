@@ -1,6 +1,7 @@
 require 'rspec/core/rake_task'
 require 'rake/clean'
 require 'open-uri'
+require 'tempfile'
 
 root = Pathname(__dir__)
 tree_sitter = root / 'tree-sitter'
@@ -8,6 +9,9 @@ include_dir = tree_sitter / 'lib/include'
 source_dir = tree_sitter / 'lib/src'
 main = root / 'src/main.c'
 engine = source_dir / 'lib.c'
+scanner_imports = source_dir / 'wasm-stdlib/imports.txt'
+scanner_symbols = -> { scanner_imports.read.scan(/"(\w+)"/).flatten }
+generated_stdlib = root / 'generated/lib/mallorn/wasm_stdlib.rb'
 output = root / 'tree-sitter.wasm'
 temporary = output.sub_ext('.wasm.tmp')
 licenses_dir = Pathname('licenses')
@@ -35,10 +39,30 @@ if sdk = ENV['WASI_SDK_PATH']
 end
 
 tree_sitter_sources = source_dir.glob('**/*.{c,h}') +
-                      include_dir.glob('**/*.h') + [main, root / 'Rakefile']
+                      include_dir.glob('**/*.h') + [main, scanner_imports, root / 'Rakefile']
 
-desc 'Compile the Tree-sitter engine to tree-sitter.wasm (requires WASI SDK)'
-task 'tree-sitter' => [:licenses, output.to_s]
+desc 'Build the Tree-sitter Wasm engine and scanner libc allowlist (requires WASI SDK)'
+task 'tree-sitter' => [:licenses, generated_stdlib.to_s, output.to_s]
+
+file generated_stdlib.to_s => [scanner_imports.to_s, (root / 'Rakefile').to_s] do
+  FileUtils.mkdir_p(generated_stdlib.dirname)
+  Tempfile.create(['wasm_stdlib', '.rb'], generated_stdlib.dirname) do |file|
+    rows = scanner_symbols.call.each_slice(8).map { |names| names.join(' ') }
+    file.write(<<~RUBY)
+      # Generated from Tree-sitter's lib/src/wasm-stdlib/imports.txt.
+      module Mallorn
+        class WasmLinker
+          SCANNER_LIBC_SYMBOLS = %w[
+            #{rows.join("\n      ")}
+          ].to_set.freeze
+        end
+      end
+    RUBY
+    file.chmod(0o644)
+    file.close
+    File.rename(file.path, generated_stdlib)
+  end
+end
 
 file output.to_s => tree_sitter_sources.map(&:to_s) do
   sdk = ENV['WASI_SDK_PATH'] or abort 'Set WASI_SDK_PATH to an installed WASI SDK directory.'
@@ -48,13 +72,15 @@ file output.to_s => tree_sitter_sources.map(&:to_s) do
   abort 'Initialize Tree-sitter with git submodule update --init tree-sitter' unless
     engine.file?
 
+  scanner_exports = scanner_symbols.call.map { |name| "-Wl,--export=#{name}" }
+
   # Publish only successful builds; failed compilation preserves the last output.
   begin
     sh compiler.to_s, '--target=wasm32-wasip1', '-mexec-model=reactor',
        '-std=c11', '-O2', '-DNDEBUG', '-D_POSIX_C_SOURCE=200809L',
        '-Wall', '-Wextra', '-I', include_dir.to_s, '-I', source_dir.to_s,
        '-Wl,--export-table', '-Wl,--growable-table', '-Wl,--export=__stack_pointer',
-       main.to_s, engine.to_s, '-o', temporary.to_s
+       *scanner_exports, main.to_s, engine.to_s, '-o', temporary.to_s
 
     temporary.rename(output)
   ensure
@@ -62,7 +88,7 @@ file output.to_s => tree_sitter_sources.map(&:to_s) do
   end
 end
 
-CLEAN.include(output.to_s, temporary.to_s)
+CLEAN.include(output.to_s, temporary.to_s, generated_stdlib.to_s)
 CLOBBER.include(*license_sources.keys.map { |name| (licenses_dir / name).to_s })
 
 RSpec::Core::RakeTask.new(:spec)

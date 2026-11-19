@@ -3,11 +3,12 @@ require 'tmpdir'
 RSpec.describe 'Wasm grammar linking' do
   before(:context) do
     root = Pathname(__dir__).parent
-    system('bundle', 'exec', 'rake', 'tree-sitter', chdir: root, exception: true)
     @grammar = root / 'node_modules/tree-sitter-javascript/tree-sitter-javascript.wasm'
     @bytes = @grammar.binread
 
     Dir.mktmpdir('mallorn-grammar-fixtures-') do |directory|
+      @scanner_libc = build_fixture(root, directory, 'scanner_libc',
+                                    exports: ['tree_sitter_scanner_libc'])
       @incompatible = build_fixture(root, directory, 'incompatible_language',
                                     exports: ['tree_sitter_incompatible'])
       @trapping_initializer = build_fixture(root, directory, 'trapping_initializer',
@@ -127,6 +128,11 @@ RSpec.describe 'Wasm grammar linking' do
     grammar = @runtime.load_grammar_bytes(@incompatible)
     expect { grammar.language('incompatible') }
       .to raise_error(Mallorn::IncompatibleLanguageError, /ABI 999/)
+  end
+
+  it 'links scanner libc functions to the engine allocator and memory' do
+    language = @runtime.load_language_bytes(@scanner_libc, name: 'scanner_libc')
+    expect(language.abi_version).to eq(15)
   end
 
   it 'rejects an invalid language pointer without invalidating existing languages' do

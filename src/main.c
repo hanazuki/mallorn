@@ -1,9 +1,8 @@
 #include <stdint.h>
 #include <stdlib.h>
-#include <wctype.h>
 #include <tree_sitter/api.h>
 
-// Only functions explicitly marked here form Mallorn's Wasm API. Pointers are
+// Functions explicitly marked here form Mallorn's Wasm API. Pointers are
 // wasm32 linear-memory offsets; lengths and positions are always in bytes.
 #define EXPORT(name) __attribute__((export_name(#name)))
 
@@ -20,16 +19,6 @@ void mallorn_free(void *pointer) {
 EXPORT(mallorn_calloc)
 void *mallorn_calloc(uint32_t count, uint32_t size) {
   return calloc(count, size);
-}
-
-EXPORT(mallorn_iswspace)
-int32_t mallorn_iswspace(uint32_t code_point) {
-  return iswspace(code_point);
-}
-
-EXPORT(mallorn_iswalpha)
-int32_t mallorn_iswalpha(uint32_t code_point) {
-  return iswalpha(code_point);
 }
 
 EXPORT(mallorn_language_symbol_count)

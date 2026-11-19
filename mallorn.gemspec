@@ -16,6 +16,7 @@ Gem::Specification.new do |spec|
   spec.files = Dir.chdir(__dir__) do
     (Dir['lib/**/*.rb', 'README.md', 'LICENSE.txt'] +
       ['tree-sitter.wasm', 'tree-sitter/LICENSE', 'tree-sitter/lib/src/unicode/LICENSE',
+       'generated/lib/mallorn/wasm_stdlib.rb',
        'licenses/README.md',
        'licenses/LICENSE-wasi-libc-MIT.txt', 'licenses/LICENSE-musl.txt',
        'licenses/LICENSE-cloudlibc.txt']).sort

@@ -1,9 +1,13 @@
+require_relative '../../generated/lib/mallorn/wasm_stdlib'
+
 module Mallorn
   # Internal linker for self-contained wasm32 dylink.0 grammar modules. Every
   # grammar uses this engine's memory, stack pointer, and function table.
   # Dependencies on other shared modules and GOT imports are not supported.
   # @api private
   class WasmLinker
+    private_constant :SCANNER_LIBC_SYMBOLS
+
     LinkedModule = Data.define(:instance, :memory_base, :memory_size)
     Layout = Data.define(:memory_size, :memory_alignment, :table_size, :table_alignment)
 
@@ -158,20 +162,18 @@ module Mallorn
         '__indirect_function_table' => @table,
         '__stack_pointer' => @stack_pointer,
         '__memory_base' => Wasmtime::Global.const(@store, :i32, i32(memory_base)),
-        '__table_base' => Wasmtime::Global.const(@store, :i32, i32(table_base)),
-        'iswspace' => @instance.export('mallorn_iswspace').to_func,
-        'iswalpha' => @instance.export('mallorn_iswalpha').to_func,
-        'malloc' => @instance.export('mallorn_alloc').to_func,
-        'calloc' => @instance.export('mallorn_calloc').to_func,
-        'free' => @instance.export('mallorn_free').to_func
+        '__table_base' => Wasmtime::Global.const(@store, :i32, i32(table_base))
       }
       linker = Wasmtime::Linker.new(@engine)
       mod.imports.each do |import|
-        item = import['module'] == 'env' ? imports[import['name']] : nil
+        namespace, name = import.values_at('module', 'name')
+        item = if namespace == 'env'
+                 imports[name] || (@instance.export(name)&.to_func if SCANNER_LIBC_SYMBOLS.include?(name))
+               end
         unless item
-          raise LinkError, "Unsupported grammar import #{import['module']}.#{import['name']}"
+          raise LinkError, "Unsupported grammar import #{namespace}.#{name}"
         end
-        linker.define(@store, import['module'], import['name'], item)
+        linker.define(@store, namespace, name, item)
       end
       linker
     end

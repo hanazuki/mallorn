@@ -5,7 +5,6 @@ require 'rubygems/package'
 RSpec.describe 'Gem package' do
   it 'ships the generated engine and required third-party notices' do
     root = Pathname(__dir__).parent
-    system('bundle', 'exec', 'rake', 'tree-sitter', chdir: root, exception: true)
 
     Dir.mktmpdir('mallorn-package-') do |directory|
       gemspec = Gem::Specification.load((root / 'mallorn.gemspec').to_s)
@@ -15,6 +14,9 @@ RSpec.describe 'Gem package' do
       destination = Pathname(directory) / 'unpacked'
       package.extract_files(destination.to_s)
       expect((destination / 'tree-sitter.wasm').binread).to eq((root / 'tree-sitter.wasm').binread)
+      stdlib = 'generated/lib/mallorn/wasm_stdlib.rb'
+      expect((destination / stdlib).binread).to eq((root / stdlib).binread)
+      expect(package.contents).not_to include('tree-sitter/lib/src/wasm-stdlib/imports.txt')
       expect((destination / 'tree-sitter/LICENSE').read).to eq((root / 'tree-sitter/LICENSE').read)
       unicode = 'tree-sitter/lib/src/unicode/LICENSE'
       expect((destination / unicode).binread).to eq((root / unicode).binread)

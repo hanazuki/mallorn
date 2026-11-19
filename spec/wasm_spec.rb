@@ -3,8 +3,6 @@ require 'wasmtime'
 RSpec.describe 'Tree-sitter Wasm build' do
   before(:context) do
     root = File.expand_path('..', __dir__)
-    system('bundle', 'exec', 'rake', 'tree-sitter', chdir: root, exception: true)
-
     engine = Wasmtime::Engine.new
     @store = Wasmtime::Store.new(engine, wasi_p1_config: Wasmtime::WasiConfig.new)
     linker = Wasmtime::Linker.new(engine)

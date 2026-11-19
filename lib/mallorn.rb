@@ -318,8 +318,8 @@ module Mallorn
 
     # Link and initialize a precompiled Wasm grammar module once. Select its
     # languages with Grammar#language. Modules must be self-contained wasm32
-    # dylink.0 with supported imports. Supported scanner imports are env.iswspace,
-    # env.iswalpha, env.malloc, env.calloc, and env.free, plus shared memory/table,
+    # dylink.0 with supported imports. Supported imports include the env functions
+    # in Tree-sitter's lib/src/wasm-stdlib/imports.txt, plus shared memory/table,
     # stack, and relocation base imports. Additional shared-module dependencies
     # and legacy dylink modules are rejected.
     # @param path [String, Pathname] Wasm grammar path
