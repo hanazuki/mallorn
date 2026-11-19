@@ -1,13 +1,10 @@
 # Mallorn
 
-WebAssembly-based Tree-sitter bindings for Ruby, with incremental parsing,
-UTF-8/UTF-16LE/UTF-16BE input, chunked source storage, tree navigation, and
-queries.
+WebAssembly-based Tree-sitter bindings for Ruby, with incremental parsing, chunked source storage, tree navigation, and queries.
 
 ## Quick start
 
-This example uses `tree-sitter-javascript.wasm` from the
-`tree-sitter-javascript` 0.25.0 package.
+This example uses prebuilt `tree-sitter-javascript.wasm` from the `tree-sitter-javascript` npm package.
 
 ```ruby
 require 'mallorn'
@@ -31,19 +28,6 @@ ensure
   runtime.close
 end
 ```
-
-Syntax errors return a tree; inspect `Node#has_error?` to detect them. Source
-input can be a String or a caller-owned stable revision exposing `encoding`
-and `read_at(byte_offset, point:)`. Every byte offset and point column counts
-bytes in the original encoding, including UTF-16.
-
-Grammars must be self-contained wasm32 modules using `dylink.0` and language
-ABI 13–15. Unsupported modules/imports raise `Mallorn::LinkError`; incompatible
-language ABIs raise `Mallorn::IncompatibleLanguageError`.
-
-Detailed usage, parameters, errors, and examples are documented with YARD in
-[lib/mallorn.rb](lib/mallorn.rb), including incremental edits, included ranges,
-chunked input, cursors, cancellation, and query predicates.
 
 ## License
 
