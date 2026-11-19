@@ -11,16 +11,6 @@ void *mallorn_alloc(uint32_t size) {
   return malloc(size);
 }
 
-EXPORT(mallorn_free)
-void mallorn_free(void *pointer) {
-  free(pointer);
-}
-
-EXPORT(mallorn_calloc)
-void *mallorn_calloc(uint32_t count, uint32_t size) {
-  return calloc(count, size);
-}
-
 EXPORT(mallorn_language_symbol_count)
 uint32_t mallorn_language_symbol_count(const TSLanguage *language) {
   return ts_language_symbol_count(language);
@@ -104,7 +94,7 @@ void mallorn_tree_edit(TSTree *tree, const TSInputEdit *edit) {
 }
 
 // Returns an allocated TSRange array; count points to a uint32_t in memory.
-// Release the returned array with mallorn_free.
+// Release the returned array with free.
 EXPORT(mallorn_tree_changed_ranges)
 TSRange *mallorn_tree_changed_ranges(
   const TSTree *old_tree,
@@ -115,7 +105,7 @@ TSRange *mallorn_tree_changed_ranges(
 }
 
 // Convenience entrypoints for verifying linked grammars before the Ruby node
-// interface is implemented. The returned string is released with mallorn_free.
+// interface is implemented. The returned string is released with free.
 EXPORT(mallorn_tree_string)
 char *mallorn_tree_string(const TSTree *tree) {
   return ts_node_string(ts_tree_root_node(tree));

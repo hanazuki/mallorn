@@ -65,9 +65,9 @@ RSpec.describe 'Wasm grammar linking' do
       sexp = @linker.invoke('mallorn_tree_string', tree)
       @linker.memory.read_cstring(sexp & 0xffffffff)
     ensure
-      @linker.invoke('mallorn_free', sexp) unless sexp.zero?
+      @linker.invoke('free', sexp) unless sexp.zero?
       @linker.invoke('mallorn_tree_delete', tree) unless tree.zero?
-      @linker.invoke('mallorn_free', input)
+      @linker.invoke('free', input)
       @linker.invoke('mallorn_parser_delete', parser)
     end
   end
@@ -221,7 +221,7 @@ RSpec.describe 'Wasm grammar linking' do
     first = load_javascript
     expect do
       @linker.load_grammar_bytes(@trapping_initializer)
-    end.to raise_error(Mallorn::LinkError, /Cannot link grammar module/)
+    end.to raise_error(Mallorn::LinkError, /Cannot link side module/)
     expect(parse(first, 'let before = 1;')).to include('(lexical_declaration ')
     expect(parse(load_javascript, 'let after = 2;')).to include('(lexical_declaration ')
   end

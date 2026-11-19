@@ -1,13 +1,9 @@
-require_relative '../../generated/lib/mallorn/wasm_stdlib'
-
 module Mallorn
-  # Internal linker for self-contained wasm32 dylink.0 grammar modules. Every
-  # grammar uses this engine's memory, stack pointer, and function table.
+  # Internal linker for self-contained wasm32 dylink.0 side modules. Each side
+  # module shares the main module's memory, stack pointer, and function table.
   # Dependencies on other shared modules and GOT imports are not supported.
   # @api private
   class WasmLinker
-    private_constant :SCANNER_LIBC_SYMBOLS
-
     LinkedModule = Data.define(:instance, :memory_base, :memory_size)
     Layout = Data.define(:memory_size, :memory_alignment, :table_size, :table_alignment)
 
@@ -51,7 +47,10 @@ module Mallorn
       end
     end
 
-    def initialize(path, imports: {})
+    def initialize(path, calloc_export:, free_export:, imports: {}, shared_function_exports: [])
+      @calloc_export = calloc_export
+      @free_export = free_export
+      @shared_function_exports = shared_function_exports
       @engine = Wasmtime::Engine.new
       @store = Wasmtime::Store.new(@engine, wasi_p1_config: Wasmtime::WasiConfig.new)
       linker = Wasmtime::Linker.new(@engine)
@@ -71,7 +70,7 @@ module Mallorn
       @modules = []
     rescue Wasmtime::Error, Wasmtime::Trap => error
       @store&.close
-      raise LinkError, "Cannot initialize Tree-sitter engine: #{error.message}"
+      raise LinkError, "Cannot initialize main Wasm module: #{error.message}"
     end
 
     def close
@@ -83,7 +82,7 @@ module Mallorn
       @store.closed?
     end
 
-    # Internal engine calls use scalar wasm32 values. Ruby memory operations
+    # Main module calls use scalar wasm32 values. Ruby memory operations
     # use unsigned offsets, whereas Wasmtime's i32 calls use signed integers.
     def invoke(name, *arguments)
       @instance.invoke(name, *arguments.map { |value| i32(value) })
@@ -104,18 +103,18 @@ module Mallorn
       begin
         alignment = 1 << layout.memory_alignment
         size = [layout.memory_size, 1].max + alignment - 1
-        raise LinkError, 'Grammar allocation exceeds wasm32 address space' if size > 0xffffffff
-        allocation = invoke('mallorn_calloc', 1, size) & 0xffffffff
-        raise LinkError, 'Cannot allocate grammar data' if allocation.zero?
+        raise LinkError, 'Side module allocation exceeds wasm32 address space' if size > 0xffffffff
+        allocation = invoke(@calloc_export, 1, size) & 0xffffffff
+        raise LinkError, 'Cannot allocate side module data' if allocation.zero?
         memory_base = align(allocation, layout.memory_alignment)
 
         table_start = @table.size
         table_base = align(table_start, layout.table_alignment)
         table_end = table_base + layout.table_size
-        raise LinkError, 'Grammar table exceeds wasm32 address space' if table_end > 0xffffffff
+        raise LinkError, 'Side module table exceeds wasm32 address space' if table_end > 0xffffffff
         @table.grow(table_end - table_start, nil) if table_end > table_start
 
-        linker = grammar_linker(mod, memory_base, table_base)
+        linker = side_module_linker(mod, memory_base, table_base)
         instance = linker.instantiate(@store, mod)
         instance.invoke('__wasm_apply_data_relocs') if instance.export('__wasm_apply_data_relocs')
         if instance.export('_initialize')
@@ -136,11 +135,11 @@ module Mallorn
             (table_start...[@table.size, table_end].min).each { |index| @table.set(index, nil) }
           end
           @stack_pointer.set(saved_stack)
-          invoke('mallorn_free', allocation) if allocation && !allocation.zero?
+          invoke(@free_export, allocation) if allocation && !allocation.zero?
         end
       end
     rescue Wasmtime::Error, Wasmtime::Trap => error
-      raise LinkError, "Cannot link grammar module: #{error.message}"
+      raise LinkError, "Cannot link side module: #{error.message}"
     end
 
     private
@@ -156,7 +155,7 @@ module Mallorn
       (value + alignment - 1) & -alignment
     end
 
-    def grammar_linker(mod, memory_base, table_base)
+    def side_module_linker(mod, memory_base, table_base)
       imports = {
         'memory' => @memory,
         '__indirect_function_table' => @table,
@@ -167,12 +166,11 @@ module Mallorn
       linker = Wasmtime::Linker.new(@engine)
       mod.imports.each do |import|
         namespace, name = import.values_at('module', 'name')
-        item = if namespace == 'env'
-                 imports[name] || (@instance.export(name)&.to_func if SCANNER_LIBC_SYMBOLS.include?(name))
-               end
-        unless item
-          raise LinkError, "Unsupported grammar import #{namespace}.#{name}"
+        if namespace == 'env'
+          item = imports[name]
+          item ||= @instance.export(name)&.to_func if @shared_function_exports.include?(name)
         end
+        raise LinkError, "Unsupported side module import #{namespace}.#{name}" unless item
         linker.define(@store, namespace, name, item)
       end
       linker
@@ -194,7 +192,7 @@ module Mallorn
         raise LinkError, 'Duplicate dylink.0 section' if layout
         layout = read_dylink(section)
       end
-      layout or raise LinkError, 'Grammar must contain a dylink.0 memory layout'
+      layout or raise LinkError, 'Side module must contain a dylink.0 memory layout'
     end
 
     def read_dylink(reader)
@@ -216,7 +214,7 @@ module Mallorn
           end
         when 2 # WASM_DYLINK_NEEDED
           unless subsection.uint32.zero? && subsection.empty?
-            raise LinkError, 'Grammar dependencies on other shared modules are not supported'
+            raise LinkError, 'Dependencies on other shared modules are not supported'
           end
         end
       end

@@ -1,6 +1,7 @@
 require 're2'
 require 'wasmtime'
 require_relative 'mallorn/version'
+require_relative '../generated/lib/mallorn/wasm_stdlib'
 
 # Tree-sitter bindings backed by a Wasm engine and separately loaded grammars.
 # @see Runtime
@@ -303,6 +304,9 @@ module Mallorn
       @release_queue = Queue.new
       @linker = WasmLinker.new(
         Pathname(__dir__).parent / 'tree-sitter.wasm',
+        shared_function_exports: WasmStdlib::LIBC_SYMBOLS,
+        calloc_export: 'calloc',
+        free_export: 'free',
         imports: { 'mallorn' => {
           'read' => [[:i32, :i32, :i32, :i32, :i32], [:i32], method(:read_input)],
           'cancel' => [[], [:i32], method(:cancel_operation)]
@@ -424,13 +428,13 @@ module Mallorn
     # @api private
     def buffer(bytes_or_size)
       size = bytes_or_size.is_a?(String) ? bytes_or_size.bytesize : bytes_or_size
-      address = pointer('mallorn_calloc', 1, [size, 1].max)
+      address = pointer('calloc', 1, [size, 1].max)
       raise Error, 'Cannot allocate Wasm memory' if address.zero?
       begin
         memory.write(address, bytes_or_size) if bytes_or_size.is_a?(String)
         yield address
       ensure
-        invoke('mallorn_free', address)
+        invoke('free', address)
       end
     end
 
@@ -462,7 +466,7 @@ module Mallorn
             Span.new(first, last, Point.new(sr, sc), Point.new(er, ec))
           end.freeze
         ensure
-          invoke('mallorn_free', address)
+          invoke('free', address)
         end
       end
     end
@@ -692,7 +696,7 @@ module Mallorn
           begin
             backend.memory.read(pointer, backend.memory.read_u32(count) * 4).unpack('L<*')
           ensure
-            backend.invoke('mallorn_free', pointer)
+            backend.invoke('free', pointer)
           end
         end
       end
@@ -1207,7 +1211,7 @@ module Mallorn
               data = backend.memory.read(pointer, backend.memory.read_u32(count) * 24)
               Array.new(data.bytesize / 24) { |index| Node.new(tree: @tree, bytes: data.byteslice(index * 24, 24).freeze) }
             ensure
-              backend.invoke('mallorn_free', pointer)
+              backend.invoke('free', pointer)
             end
           end
         end
@@ -1284,7 +1288,7 @@ module Mallorn
           begin
             backend.cstring(pointer)
           ensure
-            backend.invoke('mallorn_free', pointer)
+            backend.invoke('free', pointer)
           end
         end
       end

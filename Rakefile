@@ -51,11 +51,12 @@ file generated_stdlib.to_s => [scanner_imports.to_s, (root / 'Rakefile').to_s] d
     file.write(<<~RUBY)
       # Generated from Tree-sitter's lib/src/wasm-stdlib/imports.txt.
       module Mallorn
-        class WasmLinker
-          SCANNER_LIBC_SYMBOLS = %w[
+        module WasmStdlib
+          LIBC_SYMBOLS = %w[
             #{rows.join("\n      ")}
           ].to_set.freeze
         end
+        private_constant :WasmStdlib
       end
     RUBY
     file.chmod(0o644)

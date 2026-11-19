@@ -33,7 +33,7 @@ RSpec.describe 'Tree-sitter Wasm build' do
       memory.write(pointer, 'test')
       expect(memory.read(pointer, 4)).to eq('test')
     ensure
-      @instance.invoke('mallorn_free', pointer)
+      @instance.invoke('free', pointer)
     end
   end
 
