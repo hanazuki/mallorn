@@ -343,7 +343,7 @@ module Mallorn
     # Language exports and ABIs are validated when selecting a language.
     # @param bytes [String] Wasm binary, without text transcoding
     # @return [Grammar]
-    # @raise [LinkError] the module cannot be linked
+    # @raise [LinkError] the grammar module cannot be linked
     # @raise [ClosedError] this runtime is closed
     # @see #load_grammar
     def load_grammar_bytes(bytes)
@@ -358,8 +358,9 @@ module Mallorn
     # @param name [String] C identifier naming its tree_sitter_<name> export
     # @return [Language] a new language object owned by this runtime
     # @raise [ArgumentError] name is not a C identifier
-    # @raise [LinkError] the module cannot be linked
-    # @raise [LanguageLoadError] the export cannot provide a supported language
+    # @raise [LinkError] the grammar module cannot be linked
+    # @raise [LanguageLoadError] the language export is missing, fails, or returns
+    #   an invalid or ABI-incompatible language
     # @raise [ClosedError] this runtime is closed
     # @see #load_language_bytes
     def load_language(path, name:)
@@ -371,8 +372,9 @@ module Mallorn
     # @param name [String] C identifier naming its tree_sitter_<name> export
     # @return [Language]
     # @raise [ArgumentError] name is not a C identifier
-    # @raise [LinkError] the module cannot be linked
-    # @raise [LanguageLoadError] the export cannot provide a supported language
+    # @raise [LinkError] the grammar module cannot be linked
+    # @raise [LanguageLoadError] the language export is missing, fails, or returns
+    #   an invalid or ABI-incompatible language
     # @raise [ClosedError] this runtime is closed
     # @see #load_grammar_bytes
     def load_language_bytes(bytes, name:)
@@ -538,8 +540,9 @@ module Mallorn
     # @param name [String] C identifier naming the language export
     # @return [Language]
     # @raise [ArgumentError] name is not a C identifier
-    # @raise [LanguageLoadError] the export cannot provide a supported language
-    # @raise [ClosedError] the owning runtime is closed
+    # @raise [LanguageLoadError] the language export is missing, fails, or returns
+    #   an invalid or ABI-incompatible language
+    # @raise [ClosedError] the runtime is closed
     def language(name)
       unless name.match?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
         raise ArgumentError, 'Language name must be a C identifier'
