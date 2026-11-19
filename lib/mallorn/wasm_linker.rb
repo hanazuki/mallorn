@@ -1,6 +1,8 @@
 module Mallorn
-  # Internal linker for self-contained wasm32 dylink.0 side modules. Each side
-  # module shares the main module's memory, stack pointer, and function table.
+  # Internal linker for self-contained wasm32 dylink.0 side modules.
+  #
+  # Each side module shares the main module's memory, stack pointer, and
+  # function table.
   # Dependencies on other shared modules and GOT imports are not supported.
   # @api private
   class WasmLinker
@@ -82,8 +84,10 @@ module Mallorn
       @store.closed?
     end
 
-    # Main module calls use scalar wasm32 values. Ruby memory operations
-    # use unsigned offsets, whereas Wasmtime's i32 calls use signed integers.
+    # Calls a main module function with scalar wasm32 arguments.
+    #
+    # Ruby memory operations use unsigned offsets. Wasmtime's i32 calls use
+    # signed integers.
     def invoke(name, *arguments)
       @instance.invoke(name, *arguments.map { |value| i32(value) })
     end

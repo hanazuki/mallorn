@@ -14,19 +14,19 @@ module Mallorn
 
   # Base class for Mallorn failures.
   class Error < StandardError; end
-  # An input encoding is unsupported or differs from an incremental reuse tree.
+  # An unsupported input encoding or an encoding mismatch during tree reuse.
   class UnsupportedEncodingError < Error; end
-  # An operation cannot use the supplied language.
+  # A language incompatible with the requested operation.
   class IncompatibleLanguageError < Error; end
-  # Objects belong to different Wasm runtimes.
+  # A mismatch between the Wasm runtimes of two objects.
   class IncompatibleRuntimeError < Error; end
-  # An operation requires an object or runtime that has been closed.
+  # An operation on a closed object or runtime.
   class ClosedError < Error; end
-  # A parser or query operation was cancelled.
+  # A cancelled parse or query operation.
   class CancelledError < Error; end
-  # A Wasm module could not be loaded or has unsupported imports.
+  # A Wasm module loading or import error.
   class LinkError < Error; end
-  # A linked grammar could not provide the requested language.
+  # A language loading error in a linked grammar.
   class LanguageLoadError < Error; end
 
   # A query compilation, predicate, or directive error.
@@ -199,7 +199,7 @@ module Mallorn
       [source.is_a?(String) ? source.dup.freeze : source, encoding]
     end
 
-    # Point hints count raw bytes, even when a fragment ends inside a character.
+    # Advances a source point by raw bytes, including partial characters.
     def self.advance(point, bytes, encoding, offset, previous_byte: nil)
       if encoding != Encoding::UTF_8 && offset.odd? && previous_byte
         bytes = previous_byte + bytes
@@ -221,6 +221,8 @@ module Mallorn
       Point.new(point.row + rows, last ? bytes.bytesize - last : point.column + bytes.bytesize)
     end
 
+    # Reads a fragment with enough contiguous bytes for the decoder.
+    #
     # The decoder needs up to four contiguous bytes. Coalesce only that small
     # prefix when a caller's fragment splits UTF-8 or a UTF-16 surrogate pair.
     def self.read(source, encoding, offset, point, capacity, previous_byte: nil)
@@ -240,6 +242,8 @@ module Mallorn
       bytes
     end
 
+    # A native handle with deferred release during garbage collection.
+    #
     # Finalizers enqueue releases. The next serialized runtime operation frees
     # them; no Wasmtime calls or mutex acquisition occur inside a GC finalizer.
     class Handle
@@ -281,16 +285,19 @@ module Mallorn
   end
   private_constant :Internal
 
-  # A runtime serializes Wasm access. Input/cancellation callbacks must not
-  # reenter it. All handles become invalid when the runtime is closed.
+  # A runtime with serialized access to Wasm.
+  #
+  # Input/cancellation callbacks must not reenter the runtime. All handles
+  # become invalid when the runtime is closed.
   class Runtime
     # @api private
     attr_reader :release_queue
 
     attr_reader :language_abi_versions
 
-    # Create an independent Wasm runtime. Grammars and trees from different
-    # runtimes cannot exchange backend handles.
+    # Creates an independent Wasm runtime.
+    #
+    # Grammars and trees from different runtimes cannot exchange backend handles.
     # @raise [LinkError] the packaged engine cannot be instantiated
     # @example
     #   runtime = Runtime.new
@@ -322,9 +329,10 @@ module Mallorn
       @language_abi_versions.cover?(version)
     end
 
-    # Link and initialize a precompiled Wasm grammar module once. Select its
-    # languages with Grammar#language. Modules must be self-contained wasm32
-    # dylink.0 with supported imports. Supported imports include the env functions
+    # Links and initializes a precompiled Wasm grammar module from a file.
+    #
+    # Select its languages with Grammar#language. Modules must be self-contained
+    # wasm32 dylink.0 with supported imports. These include the env functions
     # in Tree-sitter's lib/src/wasm-stdlib/imports.txt, plus shared memory/table,
     # stack, and relocation base imports. Additional shared-module dependencies
     # and legacy dylink modules are rejected.
@@ -337,9 +345,11 @@ module Mallorn
       load_grammar_bytes(Pathname(path).binread)
     end
 
-    # Link and initialize a grammar module from bytes. Loaded modules remain
-    # resident until this runtime is closed or collected. Each call creates a
-    # separate module instance; retain the Grammar to share it across languages.
+    # Links and initializes a grammar module from bytes.
+    #
+    # Loaded modules remain resident until this runtime is closed or collected.
+    # Each call creates a separate module instance. Retain the Grammar to share
+    # it across languages.
     # Language exports and ABIs are validated when selecting a language.
     # @param bytes [String] Wasm binary, without text transcoding
     # @return [Grammar]
@@ -352,8 +362,9 @@ module Mallorn
       end
     end
 
-    # Load a module from a file and select one language. To share a module
-    # between multiple languages, use #load_grammar instead.
+    # Loads a module from a file and selects one language.
+    #
+    # Use #load_grammar to share a module between multiple languages.
     # @param path [String, Pathname] Wasm grammar path
     # @param name [String] C identifier naming its tree_sitter_<name> export
     # @return [Language] a new language object owned by this runtime
@@ -367,7 +378,7 @@ module Mallorn
       load_language_bytes(Pathname(path).binread, name:)
     end
 
-    # Load a module from bytes and select one language.
+    # Loads a module from bytes and selects one language.
     # @param bytes [String] Wasm binary, without text transcoding
     # @param name [String] C identifier naming its tree_sitter_<name> export
     # @return [Language]
@@ -381,7 +392,9 @@ module Mallorn
       load_grammar_bytes(bytes).language(name)
     end
 
-    # Close the Wasm store, invalidating every associated object. Idempotent.
+    # Closes the Wasm store and invalidates every associated object.
+    #
+    # This method is idempotent.
     # @return [nil]
     # @raise [Error] called from one of this runtime's callbacks
     def close
@@ -413,7 +426,7 @@ module Mallorn
       end
     end
 
-    # Internal ABI methods are called inside with_backend's serialized section.
+    # Calls an internal ABI function within with_backend's serialized section.
     # @api private
     def invoke(name, *arguments)
       @linker.invoke(name, *arguments)
@@ -520,6 +533,7 @@ module Mallorn
   end
 
   # A linked Wasm module that can export multiple Tree-sitter languages.
+  #
   # Obtain one from Runtime#load_grammar or Runtime#load_grammar_bytes.
   # Its languages share one module instance until the runtime is closed.
   class Grammar
@@ -533,7 +547,8 @@ module Mallorn
       @languages = {}
     end
 
-    # Select a tree_sitter_<name> export and validate its language ABI.
+    # Selects a tree_sitter_<name> export and validates its language ABI.
+    #
     # Repeated selections of the same name return the identical Language.
     # A failed selection leaves the module available for other selections.
     # The engine supports language ABI 13 through 15.
@@ -586,8 +601,10 @@ module Mallorn
     end
   end
 
-  # A loaded language shared by parsers, trees, and queries. Obtain one from
-  # {Grammar#language}, {Runtime#load_language}, or {Runtime#load_language_bytes}.
+  # A loaded language shared by parsers, trees, and queries.
+  #
+  # Obtain one from {Grammar#language}, {Runtime#load_language},
+  # or {Runtime#load_language_bytes}.
   class Language
     # Tree-sitter TSSymbolType values.
     SYMBOL_TYPE_REGULAR = 0
@@ -727,8 +744,9 @@ module Mallorn
     end
   end
 
-  # Parses one language, reusing edited syntax trees when supplied. Parsers
-  # cannot execute concurrently or reentrantly; use independent parsers for
+  # Parses one language, reusing edited syntax trees when supplied.
+  #
+  # Parsers cannot execute concurrently or reentrantly; use independent parsers for
   # independent parse operations.
   class Parser
     # @return [Language] language used for every parse
@@ -750,6 +768,8 @@ module Mallorn
       end
     end
 
+    # Parses source text into a syntax tree.
+    #
     # Input is a String (snapshotted) or caller-owned stable revision responding
     # to encoding and read_at(byte_offset, point:). nil/empty means EOF. Reads
     # can repeat, seek backwards, and split characters. All coordinates are bytes.
@@ -831,7 +851,8 @@ module Mallorn
       end
     end
 
-    # Reset any retained parse state.
+    # Resets any retained parse state.
+    #
     # @return [self]
     # @raise [ClosedError] parser or runtime is closed
     # @raise [Error] this parser is already in use
@@ -840,7 +861,10 @@ module Mallorn
       self
     end
 
-    # Close this object and release its native resources. Idempotent.
+    # Closes this object and releases its native resources.
+    #
+    # This method is idempotent.
+    #
     # @return [nil]
     # @raise [Error] this parser is currently parsing or resetting
     def close
@@ -865,7 +889,9 @@ module Mallorn
     end
   end
 
-  # An immutable syntax snapshot. Nodes retain their tree and its source.
+  # An immutable syntax snapshot.
+  #
+  # Nodes retain their tree and its source.
   # A tree remains usable after its parser is closed. It is released by GC
   # or by closing its owning runtime.
   class Tree
@@ -914,7 +940,7 @@ module Mallorn
       end
     end
 
-    # Return a cheap independent snapshot sharing immutable syntax storage.
+    # Returns a cheap independent snapshot sharing immutable syntax storage.
     # @return [Tree] a copy retaining the same source revision and encoding
     def copy
       @runtime.with_backend do |backend|
@@ -923,9 +949,11 @@ module Mallorn
       end
     end
 
-    # Copy and adjust coordinates without mutating existing nodes or snapshots.
-    # Each edit uses the previous edit's output coordinates. The intermediate
-    # tree has no source; Node#text becomes available after reparsing.
+    # Copies a tree and adjusts its coordinates for reuse.
+    #
+    # Existing nodes and snapshots keep their coordinates. Each edit uses the
+    # previous edit's output coordinates. The intermediate tree has no source.
+    # Node#text becomes available after reparsing.
     # @param edits [Array<InputEdit>] sequential edits, each expressed relative
     #   to the preceding edit's output revision
     # @return [Tree] independent edited reuse tree, with source == nil
@@ -959,7 +987,7 @@ module Mallorn
       end
     end
 
-    # Syntactic changes in new-tree coordinates, not a record of all text edits.
+    # Returns syntactic changes in new-tree coordinates.
     # @param new_tree [Tree] freshly parsed tree using this edited reuse tree
     # @return [Array<Span>] frozen syntactic change ranges in the new revision
     # @raise [IncompatibleRuntimeError] runtimes differ
@@ -972,9 +1000,11 @@ module Mallorn
     end
   end
 
-  # An immutable view into a tree snapshot. Text access retains its original
-  # source encoding; coordinates are source bytes. A runtime close invalidates
-  # node operations even when immutable property values were previously cached.
+  # An immutable view into a tree snapshot.
+  #
+  # Text access retains the original source encoding. Coordinates are source
+  # bytes. Closing the runtime invalidates node operations even when immutable
+  # property values were previously cached.
   class Node
     # @return [Tree] retained owning snapshot
     attr_reader :tree
@@ -987,7 +1017,7 @@ module Mallorn
       @tree, @bytes = tree, bytes
     end
 
-    # Identity is scoped to a snapshot, never stable across document revisions.
+    # Checks whether both objects identify the same node in the same snapshot.
     # @param other [Object]
     # @return [Boolean] whether both nodes identify the same node in the same snapshot
     # @note Copies and edited trees have independent node identities.
@@ -1197,7 +1227,9 @@ module Mallorn
       end
     end
 
-    # Fetch all child values in one backend call, then release the runtime lock
+    # Yields child nodes in source order.
+    #
+    # Fetches all child values in one backend call and releases the runtime lock
     # before yielding. No consumer block runs while Wasm is borrowed.
     # @param named [Boolean] include only named children if true
     # @yield [child] each child in source order
@@ -1260,8 +1292,10 @@ module Mallorn
       result
     end
 
-    # Yield only this node's bytes. A caller-owned source must remain the same
-    # stable revision throughout the tree's lifetime. Fragments may split chars.
+    # Yields the source bytes for this node in chunks.
+    #
+    # A caller-owned source must remain stable throughout the tree's lifetime.
+    # Fragments may split characters.
     # @yield [chunk] encoded fragment covering part of this node
     # @yieldparam chunk [String] original source encoding; may split characters
     # @return [self, Enumerator<String>] self with a block, otherwise an Enumerator
@@ -1325,7 +1359,9 @@ module Mallorn
     end
   end
 
-  # Stateful traversal. Movement returns true on success, false otherwise.
+  # A cursor for stateful tree traversal.
+  #
+  # Movement returns true on success and false otherwise.
   class TreeCursor
     # @return [Tree] snapshot currently retained by this cursor
     attr_reader :tree
@@ -1367,31 +1403,31 @@ module Mallorn
       @tree.runtime.with_backend { |backend| backend.invoke('mallorn_cursor_depth', @handle.address) }
     end
 
-    # Move to the parent, stopping at this cursor's root.
+    # Moves to the parent, stopping at this cursor's root.
     # @return [Boolean] true if moved; false leaves the position unchanged
     def goto_parent
       move('mallorn_cursor_goto_parent')
     end
 
-    # Move to the first child.
+    # Moves to the first child.
     # @return [Boolean] true if moved; false leaves the position unchanged
     def goto_first_child
       move('mallorn_cursor_goto_first_child')
     end
 
-    # Move to the last child.
+    # Moves to the last child.
     # @return [Boolean] true if moved; false leaves the position unchanged
     def goto_last_child
       move('mallorn_cursor_goto_last_child')
     end
 
-    # Move to the next sibling.
+    # Moves to the next sibling.
     # @return [Boolean] true if moved; false leaves the position unchanged
     def goto_next_sibling
       move('mallorn_cursor_goto_next_sibling')
     end
 
-    # Move to the previous sibling.
+    # Moves to the previous sibling.
     # @return [Boolean] true if moved; false leaves the position unchanged
     def goto_previous_sibling
       move('mallorn_cursor_goto_previous_sibling')
@@ -1421,7 +1457,9 @@ module Mallorn
       end
     end
 
-    # Close this object and release its native resources. Idempotent.
+    # Closes this object and releases its native resources.
+    #
+    # This method is idempotent.
     # @return [nil]
     def close
       @handle.close
@@ -1439,8 +1477,10 @@ module Mallorn
     end
   end
 
-  # A compiled Tree-sitter query. It can be shared by independent query cursors.
-  # Query source is UTF-8; matched source text can use any supported encoding.
+  # A compiled Tree-sitter query.
+  #
+  # Independent query cursors can share the query. Query source is UTF-8.
+  # Matched source text can use any supported encoding.
   class Query
     # @return [Language] grammar used to compile this query
     attr_reader :language
@@ -1510,7 +1550,9 @@ module Mallorn
       @handle.address
     end
 
-    # Unknown operations are retained with typed capture references, not dropped.
+    # Returns the predicates and directives for a pattern.
+    #
+    # Unknown operations retain their typed capture references.
     # @param pattern_index [Integer] zero-based index below pattern_count
     # @return [Array<Predicate>] frozen operations with literal or CaptureReference arguments
     # @raise [ArgumentError] pattern index is invalid
@@ -1521,9 +1563,11 @@ module Mallorn
       @predicates.fetch(pattern_index)
     end
 
+    # Creates an independent execution cursor.
+    #
     # Custom handlers receive (Predicate, Match). Predicates return a truthy
     # value to accept; directives ending in ! return a property Hash or nil.
-    # Create an independent execution cursor. Standard text predicates are eq?,
+    # Standard text predicates are eq?,
     # not-eq?, match?, not-match?, their any- variants, and any-of?/not-any-of?.
     # Without any-, every captured node must satisfy the comparison. Regex predicates
     # use RE2 syntax; node text is transcoded to UTF-8 for evaluation.
@@ -1559,7 +1603,9 @@ module Mallorn
       QueryCursor.new(query: self, handlers: handlers)
     end
 
-    # Close this object and release its native resources. Idempotent.
+    # Closes this object and releases its native resources.
+    #
+    # This method is idempotent.
     # @return [nil]
     # @note Associated cursors cannot execute after the query is closed.
     def close
@@ -1581,8 +1627,9 @@ module Mallorn
     end
   end
 
-  # Executes a query against one node's source snapshot at a time. Returned
-  # enumerators are lazy; execution begins when enumerated. A cursor cannot
+  # Executes a query against one node's source snapshot at a time.
+  #
+  # Execution begins when a returned enumerator is consumed. A cursor cannot
   # execute concurrently or reentrantly, including while an enumerator is paused.
   class QueryCursor
     TEXT_PREDICATES = [
@@ -1610,9 +1657,11 @@ module Mallorn
       end
     end
 
-    # Each call returns a lazy Enumerator. Half-open ranges filter overlapping
-    # matches; individual captures may lie outside those ranges. The cursor
-    # cannot execute concurrently or reentrantly. Consumer blocks run unlocked.
+    # Returns a lazy enumerator of query matches.
+    #
+    # Half-open ranges filter overlapping matches. Individual captures may lie
+    # outside those ranges. The cursor cannot execute concurrently or
+    # reentrantly. Consumer blocks run unlocked.
     # @param node [Node] search subtree; must use the query's identical language object
     # @param byte_range [Range<Integer>, nil] finite half-open byte range; matches
     #   can extend beyond it if they overlap
@@ -1645,7 +1694,9 @@ module Mallorn
       end
     end
 
-    # Buffer completed, predicate-checked matches before sorting their captures
+    # Returns query captures in source order.
+    #
+    # Buffers completed, predicate-checked matches before sorting their captures
     # by source position and pattern index. Use matches for streaming results.
     # Captures outside the filtering ranges are excluded, even when their match
     # spans the range. Repeated captures and captures from distinct matches remain.
@@ -1675,7 +1726,9 @@ module Mallorn
       @exceeded
     end
 
-    # Close this object and release its native resources. Idempotent.
+    # Closes this object and releases its native resources.
+    #
+    # This method is idempotent.
     # @return [nil]
     # @raise [Error] an enumeration is still active
     def close
