@@ -33,6 +33,24 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: bundle exec rake spec
 
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1.338.0
+        with:
+          ruby-version: '4.0'
+      - run: gem install yard --version 0.9.44 --no-document
+      - run: yard doc --no-save --output-dir doc 'lib/**/*.rb'
+      - uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: doc
+
   build:
     needs: [test]
     runs-on: ubuntu-latest
@@ -59,6 +77,16 @@ jobs:
         with:
           sandbox: bubblewrap
 
+  ci-pass:
+    if: ${{ always() }}
+    needs: [build, docs]
+    runs-on: ubuntu-slim
+    permissions: {}
+    steps:
+      - name: Check required jobs
+        if: ${{ needs.build.result != 'success' || needs.docs.result != 'success' }}
+        run: exit 1
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build]
@@ -70,3 +98,18 @@ jobs:
       id-token: write
     steps:
       - uses: release-gems/action/publish@v1.2.2
+
+  deploy-docs:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [docs, publish]
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5.0.1
