@@ -49,10 +49,14 @@ module Mallorn
       end
     end
 
-    def initialize(path, calloc_export:, free_export:, imports: {}, shared_function_exports: [])
+    # Instantiates the main Wasm module.
+    #
+    # The exports list names the main module functions that side modules can
+    # import from env.
+    def initialize(path, calloc_export:, free_export:, imports: {}, exports: [])
       @calloc_export = calloc_export
       @free_export = free_export
-      @shared_function_exports = shared_function_exports
+      @exports = exports
       @engine = Wasmtime::Engine.new
       @store = Wasmtime::Store.new(@engine, wasi_p1_config: Wasmtime::WasiConfig.new)
       linker = Wasmtime::Linker.new(@engine)
@@ -171,8 +175,9 @@ module Mallorn
       mod.imports.each do |import|
         namespace, name = import.values_at('module', 'name')
         if namespace == 'env'
-          item = imports[name]
-          item ||= @instance.export(name)&.to_func if @shared_function_exports.include?(name)
+          item = imports.fetch(name) do
+            @instance.export(name)&.to_func if @exports.include?(name)
+          end
         end
         raise LinkError, "Unsupported side module import #{namespace}.#{name}" unless item
         linker.define(@store, namespace, name, item)

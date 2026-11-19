@@ -313,7 +313,7 @@ module Mallorn
       @release_queue = Queue.new
       @linker = WasmLinker.new(
         Pathname(__dir__).parent / 'tree-sitter.wasm',
-        shared_function_exports: WasmStdlib::LIBC_SYMBOLS,
+        exports: WasmStdlib::LIBC_SYMBOLS,
         calloc_export: 'calloc',
         free_export: 'free',
         imports: { 'mallorn' => {
