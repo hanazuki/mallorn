@@ -120,14 +120,14 @@ RSpec.describe 'Wasm grammar linking' do
   it 'keeps a grammar usable after selecting a missing export' do
     grammar = @runtime.load_grammar_bytes(@bytes)
     expect { grammar.language('missing') }
-      .to raise_error(Mallorn::LinkError, /Missing grammar export/)
+      .to raise_error(Mallorn::LanguageLoadError, /Missing grammar export/)
     expect(grammar.language('javascript').symbol_count).to be_positive
   end
 
   it 'checks the language ABI on selection rather than when linking a grammar' do
     grammar = @runtime.load_grammar_bytes(@incompatible)
     expect { grammar.language('incompatible') }
-      .to raise_error(Mallorn::IncompatibleLanguageError, /ABI 999/)
+      .to raise_error(Mallorn::LanguageLoadError, /ABI 999/)
   end
 
   it 'links scanner libc functions to the engine allocator and memory' do
@@ -139,7 +139,7 @@ RSpec.describe 'Wasm grammar linking' do
     javascript = load_javascript
     grammar = @linker.load_grammar_bytes(@invalid_pointer)
     expect { grammar.language('invalid_pointer') }
-      .to raise_error(Mallorn::LinkError, /outside its data region/)
+      .to raise_error(Mallorn::LanguageLoadError, /outside its data region/)
     expect(parse(javascript, 'let x = 1;')).to include('(lexical_declaration ')
   end
 
@@ -147,7 +147,7 @@ RSpec.describe 'Wasm grammar linking' do
     javascript = load_javascript
     grammar = @linker.load_grammar_bytes(@trapping_entrypoint)
     expect { grammar.language('trapping') }
-      .to raise_error(Mallorn::LinkError, /Cannot select language trapping/)
+      .to raise_error(Mallorn::LanguageLoadError, /Cannot select language trapping/)
     expect(parse(javascript, 'let x = 1;')).to include('(lexical_declaration ')
   end
 
@@ -206,14 +206,14 @@ RSpec.describe 'Wasm grammar linking' do
   it 'rejects an incompatible ABI and can subsequently load a valid module' do
     expect do
       @linker.load_language_bytes(@incompatible, name: 'incompatible')
-    end.to raise_error(Mallorn::IncompatibleLanguageError, /ABI 999/)
+    end.to raise_error(Mallorn::LanguageLoadError, /ABI 999/)
     expect(parse(load_javascript, 'let x = 1;')).to include('(lexical_declaration ')
   end
 
   it 'rejects a missing grammar export' do
     expect do
       @linker.load_language_bytes(@bytes, name: 'missing')
-    end.to raise_error(Mallorn::LinkError, /Missing grammar export tree_sitter_missing/)
+    end.to raise_error(Mallorn::LanguageLoadError, /Missing grammar export tree_sitter_missing/)
     expect(parse(load_javascript, 'let x = 1;')).to include('(lexical_declaration ')
   end
 

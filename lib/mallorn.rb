@@ -16,7 +16,7 @@ module Mallorn
   class Error < StandardError; end
   # An input encoding is unsupported or differs from an incremental reuse tree.
   class UnsupportedEncodingError < Error; end
-  # A grammar ABI or a tree/query language is incompatible.
+  # An operation cannot use the supplied language.
   class IncompatibleLanguageError < Error; end
   # Objects belong to different Wasm runtimes.
   class IncompatibleRuntimeError < Error; end
@@ -26,6 +26,8 @@ module Mallorn
   class CancelledError < Error; end
   # A Wasm module could not be loaded or has unsupported imports.
   class LinkError < Error; end
+  # A linked grammar could not provide the requested language.
+  class LanguageLoadError < Error; end
 
   # A query compilation, predicate, or directive error.
   # @see Query
@@ -356,8 +358,8 @@ module Mallorn
     # @param name [String] C identifier naming its tree_sitter_<name> export
     # @return [Language] a new language object owned by this runtime
     # @raise [ArgumentError] name is not a C identifier
-    # @raise [LinkError] linking fails or the requested export is missing
-    # @raise [IncompatibleLanguageError] the grammar ABI is unsupported
+    # @raise [LinkError] the module cannot be linked
+    # @raise [LanguageLoadError] the export cannot provide a supported language
     # @raise [ClosedError] this runtime is closed
     # @see #load_language_bytes
     def load_language(path, name:)
@@ -369,8 +371,8 @@ module Mallorn
     # @param name [String] C identifier naming its tree_sitter_<name> export
     # @return [Language]
     # @raise [ArgumentError] name is not a C identifier
-    # @raise [LinkError] linking fails or the requested export is missing
-    # @raise [IncompatibleLanguageError] the grammar ABI is unsupported
+    # @raise [LinkError] the module cannot be linked
+    # @raise [LanguageLoadError] the export cannot provide a supported language
     # @raise [ClosedError] this runtime is closed
     # @see #load_grammar_bytes
     def load_language_bytes(bytes, name:)
@@ -536,8 +538,7 @@ module Mallorn
     # @param name [String] C identifier naming the language export
     # @return [Language]
     # @raise [ArgumentError] name is not a C identifier
-    # @raise [LinkError] the export is missing or cannot provide a language
-    # @raise [IncompatibleLanguageError] the language ABI is unsupported
+    # @raise [LanguageLoadError] the export cannot provide a supported language
     # @raise [ClosedError] the owning runtime is closed
     def language(name)
       unless name.match?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
@@ -547,14 +548,14 @@ module Mallorn
       @runtime.with_backend do |backend|
         next @languages[name] if @languages.key?(name)
         entrypoint = @module.instance.export("tree_sitter_#{name}")
-        raise LinkError, "Missing grammar export tree_sitter_#{name}" unless entrypoint
+        raise LanguageLoadError, "Missing grammar export tree_sitter_#{name}" unless entrypoint
         address = entrypoint.to_func.call & 0xffffffff
         unless address >= @module.memory_base && address + 4 <= @module.memory_base + @module.memory_size
-          raise LinkError, 'Grammar returned a language pointer outside its data region'
+          raise LanguageLoadError, 'Grammar returned a language pointer outside its data region'
         end
         abi_version = backend.memory.read_u32(address)
         unless backend.support_abi_version?(abi_version)
-          raise IncompatibleLanguageError, "Grammar ABI #{abi_version} is unsupported"
+          raise LanguageLoadError, "Grammar ABI #{abi_version} is unsupported"
         end
         @languages[name] = Language.new(
           runtime: @runtime,
@@ -567,8 +568,8 @@ module Mallorn
           state_count: backend.invoke('mallorn_language_state_count', address)
         )
       end
-    rescue Wasmtime::Error, Wasmtime::Trap => error
-      raise LinkError, "Cannot select language #{name}: #{error.message}"
+    rescue Wasmtime::Error => error
+      raise LanguageLoadError, "Cannot select language #{name}: #{error.message}"
     end
 
     private
