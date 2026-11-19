@@ -6,6 +6,11 @@ module Mallorn
   # Dependencies on other shared modules and GOT imports are not supported.
   # @api private
   class WasmLinker
+    WASM_CUSTOM_SECTION = 0
+    WASM_DYLINK_MEM_INFO = 1
+    WASM_DYLINK_NEEDED = 2
+    private_constant :WASM_CUSTOM_SECTION, :WASM_DYLINK_MEM_INFO, :WASM_DYLINK_NEEDED
+
     LinkedModule = Data.define(:instance, :memory_base, :memory_size)
     Layout = Data.define(:memory_size, :memory_alignment, :table_size, :table_alignment)
 
@@ -187,14 +192,14 @@ module Mallorn
 
     def read_layout(bytes)
       reader = Reader.new(bytes)
-      unless reader.read(8) == ['0061736d01000000'].pack('H*')
+      unless reader.read(8) == "\x00asm\x01\x00\x00\x00"
         raise LinkError, 'Expected a WebAssembly version 1 module'
       end
       layout = nil
       until reader.empty?
         section_id = reader.byte
         section = Reader.new(reader.read(reader.uint32))
-        next unless section_id.zero?
+        next unless section_id == WASM_CUSTOM_SECTION
         name = section.string
         raise LinkError, 'Legacy dylink sections are not supported' if name == 'dylink'
         next unless name == 'dylink.0'
@@ -210,7 +215,7 @@ module Mallorn
         subsection_id = reader.byte
         subsection = Reader.new(reader.read(reader.uint32))
         case subsection_id
-        when 1 # WASM_DYLINK_MEM_INFO
+        when WASM_DYLINK_MEM_INFO
           raise LinkError, 'Duplicate dylink.0 memory layout' if layout
           layout = Layout.new(
             memory_size: subsection.uint32,
@@ -221,7 +226,7 @@ module Mallorn
           unless subsection.empty? && layout.memory_alignment <= 31 && layout.table_alignment <= 31
             raise LinkError, 'Invalid dylink.0 memory layout'
           end
-        when 2 # WASM_DYLINK_NEEDED
+        when WASM_DYLINK_NEEDED
           unless subsection.uint32.zero? && subsection.empty?
             raise LinkError, 'Dependencies on other shared modules are not supported'
           end
