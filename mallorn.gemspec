@@ -13,14 +13,21 @@ Gem::Specification.new do |spec|
   spec.license = 'MIT'
   spec.required_ruby_version = '>= 4.0'
 
-  spec.files = Dir.chdir(__dir__) do
-    (Dir['lib/**/*.rb', 'README.md', 'LICENSE.txt'] +
-      ['tree-sitter.wasm', 'tree-sitter/LICENSE', 'tree-sitter/lib/src/unicode/LICENSE',
-       'generated/lib/mallorn/wasm_stdlib.rb',
-       'licenses/README.md',
-       'licenses/LICENSE-wasi-libc-MIT.txt', 'licenses/LICENSE-musl.txt',
-       'licenses/LICENSE-cloudlibc.txt']).sort
-  end
+  spec.files = %w[
+    LICENSE.txt
+    README.md
+    generated/lib/mallorn/wasm_stdlib.rb
+    lib/mallorn.rb
+    lib/mallorn/version.rb
+    lib/mallorn/wasm_linker.rb
+    licenses/LICENSE-cloudlibc.txt
+    licenses/LICENSE-musl.txt
+    licenses/LICENSE-wasi-libc-MIT.txt
+    licenses/README.md
+    tree-sitter.wasm
+    tree-sitter/LICENSE
+    tree-sitter/lib/src/unicode/LICENSE
+  ]
   spec.require_paths = ['lib']
 
   spec.add_dependency 're2', '~> 2.28'
